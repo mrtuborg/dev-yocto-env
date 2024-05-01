@@ -1,0 +1,192 @@
+#!/bin/bash
+
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    echo "This script should be sourced, not executed."
+    echo "Use: source ${BASH_SOURCE[0]}"
+    exit 1
+fi
+SCRIPT_DIR=$( dirname $(realpath "$0") )
+echo "Script directory: ${SCRIPT_DIR}"
+
+# Set the architecture of the environment
+# Priorities:
+# 1. First argument to the script
+# 2. ENV_ARCH environment variable
+# 3. uname -m
+ENV_ARCH=${1:-${ENV_ARCH:-$(uname -m)}}
+
+echo "Environment: ${ENV_ARCH}"
+
+
+PROJECT_TOP=$(git rev-parse --show-toplevel)
+PROJECT_NAME=$(basename ${PROJECT_TOP} | tr '.' '-')
+POKY_TMP_DIR=poky_tmp
+WORKSPACE_PATH=/workspace
+
+if [ "${ENV_ARCH}" = "x86_64" ]; then
+    FILEBROWSER_PORT=8080
+else
+    FILEBROWSER_PORT=8081
+fi
+
+TOASTER_WEBUI=9090
+WORKDIR_UID=1000
+WORKDIR_GID=1000
+
+
+POKY_IMAGE=roommatedev01.azurecr.io/vari-buildenv:22.04
+#POKY_IMAGE=snabel/var-env-22.04
+#TOASTER_IMAGE=roommatedev01.azurecr.io/toaster:${PROJECT_VER}
+VOLUME_NAME=${PROJECT_NAME}-${ENV_ARCH}
+
+# Export environment variables for docker-compose
+export POKY_IMAGE
+export PROJECT_TOP
+export PROJECT_NAME
+# export PROJECT_VER
+export WORKSPACE_PATH
+export WORKDIR_UID
+export WORKDIR_GID
+export FILEBROWSER_PORT
+export ENV_ARCH
+export VOLUME_NAME
+
+# Replace the environment variable in the template and generate docker-compose.yml
+envsubst < ${SCRIPT_DIR}/docker-compose.template.yml > docker-compose.${ENV_ARCH}.yml
+
+# Run docker-compose up
+echo "Running compose for ${VOLUME_NAME}"
+docker compose \
+    -f ${PROJECT_TOP}/docker-compose.${ENV_ARCH}.yml \
+    --project-name "${VOLUME_NAME}" \
+    up -d
+
+#_beautifier() {
+#    sed "s|${WORKSPACE_PATH}\/|${PROJECT_TOP}\/|g" # Jump-to-code by click support for VSCode
+#}
+
+_poky_dock() {
+    local BUILDPLATFORM="${1}"
+    local COMMAND_TO_RUN="${2}"
+
+    local docker_args=(
+        -u vari
+        -it --rm
+        -v ${VOLUME_NAME}_workdir:/workdir
+        -w "${WORKSPACE_PATH}"
+        vde
+        /bin/bash -c "${COMMAND_TO_RUN}"
+    )
+
+    mkdir -p ${PROJECT_TOP}/${POKY_TMP_DIR}
+    docker-compose -f ${PROJECT_TOP}/docker-compose.${ENV_ARCH}.yml run "${docker_args[@]}"
+}
+
+# Should be part of poky image
+# _toaster() {
+#   BUILDPLATFORM="${1}"
+#    shift 1
+#
+#    local docker_args=(
+#        --platform ${BUILDPLATFORM}
+#        -it --rm
+#        --name=${PROJECT_NAME}-toaster-${PROJECT_VER}
+#        --hostname=${PROJECT_NAME}-toaster
+#        -v ${PROJECT_TOP}:${WORKSPACE_PATH}
+#        -v ${VOLUME_NAME}_workdir:/workdir
+#        -v /etc/localtime:/etc/localtime:ro
+#        -v /etc/timezone:/etc/timezone:ro
+#        -w "${WORKSPACE_PATH}"
+#        -p ${TOASTER_WEBUI}:8000
+#        ${TOASTER_IMAGE} /bin/bash -c "$@"
+#    )
+#    mkdir -p ${PROJECT_TOP}/${POKY_TMP_DIR}
+#    docker run "${docker_args[@]}"
+#}
+
+
+print() {
+    case $1 in
+        machines)
+            find . -type f -path '*/machine/*.conf' -exec basename {} .conf \; | sort | xargs -I {} echo -n "{}, " | sed 's/, $/\n/'
+            ;;
+        images)
+            find . -type f -path '*/images/*.bb' -exec basename {} .bb \; | sort | xargs -I {} echo -n "{}, " | sed 's/, $/\n/'
+            ;;
+        distro)
+            find . -type f -name '*.conf' -exec grep -H 'DISTRO =' {} \; | cut -d '=' -f 2 | tr -d ' \"' | sort | uniq
+            ;;
+    esac
+
+}
+
+poky() {
+    local POKY_TOOLCHAIN_PATH="sources/poky"
+    local TOASTER_ENVIRONMENT="${POKY_TOOLCHAIN_PATH}/oe-init-build-env"
+    local POKY_ENVIRONMENT="${WORKSPACE_PATH}/setup-environment"
+    local SHELL_HISTFILE="${WORKSPACE_PATH}/${POKY_TMP_DIR}/poky_shell_history"
+    local COMMAND_TO_RUN="$1"
+    local ARGS="$2"
+    local SHELL="export HISTFILE=${SHELL_HISTFILE}; /bin/bash"
+
+    if [ -z "${ARGS}" ]; then
+        ARGS="${SHELL}"
+    else
+        ARGS="source ${POKY_ENVIRONMENT} ${ARGS}; ${SHELL}"
+    fi
+
+    case ${COMMAND_TO_RUN} in
+        shell)
+            _poky_dock linux/${ENV_ARCH} "${ARGS}"
+        #_poky_dock linux/amd64 \
+            #        "source ${POKY_ENVIRONMENT} build;  \
+            #         export HISTFILE=${SHELL_HISTFILE}; \
+            #     bash"
+            ;;
+        run)
+            shift
+            _poky_dock linux/${ENV_ARCH} \
+            "source poky/oe-init-build-env build; $*" | _beautifier
+            ;;
+#        toaster)
+#            shift
+#            BUILD_DIR="${1}"
+#            # SET_ENVIRONMENT="setup-environment"
+#
+#            if [ -z "${BUILD_DIR}" ]; then
+#                echo "Please specify build directory"
+#                return 1
+#            fi
+#
+#            _toaster linux/${ENV_ARCH} \
+#                    "export HISTFILE=${SHELL_HISTFILE}; \
+#                    toaster-launch.sh \
+#                        ${WORKSPACE_PATH} \
+#                        ${WORKSPACE_PATH}/${POKY_TOOLCHAIN_PATH} \
+#                        ${BUILD_DIR} \
+#                        ${SET_ENVIRONMENT}"
+#            ;;
+    esac
+}
+
+# Unexport environment variables for docker-compose
+unset POKY_IMAGE
+# keep PROJECT_TOP
+unset PROJECT_NAME
+# unset PROJECT_VER
+# keep WORKSPACE_PATH
+unset WORKDIR_UID
+unset WORKDIR_GID
+unset FILEBROWSER_PORT
+# keep ENV_ARCH as default
+# keep VOLUME_NAME
+
+echo
+echo " This environment has following functions:"
+echo "============================================"
+echo " * poky shell           - start yocto/poky interactive container shell"
+echo " * poky toaster <dir>   - start yocto/poky toaster interactive container shell within specified build directory"
+echo " * poky run             - execute specified command in Poky build environment non-interactively"
+echo " * print machines       - list all available machine configurations"
+echo " * print images         - list all available images"
+echo " * print distro         - list all available distros"
