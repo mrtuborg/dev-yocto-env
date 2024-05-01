@@ -1,0 +1,38 @@
+services:
+  vde:
+    image: ${POKY_IMAGE}
+    platform: linux/${ENV_ARCH}
+    command:
+      [
+        "/bin/sh",
+        "-c",
+        "touch /workdir/.initialized; chown -hR ${WORKDIR_UID}:${WORKDIR_GID} /workdir",
+      ]
+    volumes:
+      - ${PROJECT_TOP}:${WORKSPACE_PATH}
+      - workdir:/workdir
+      - ${HOME}/.ssh:/home/vari/.ssh
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+    user: root
+    container_name: "${PROJECT_NAME}-${ENV_ARCH}"
+    hostname: "${PROJECT_NAME}-${ENV_ARCH}"
+
+  filebrowser:
+    image: filebrowser/filebrowser
+    platform: linux/${ENV_ARCH}
+    container_name: "${VOLUME_NAME}_filebrowser"
+    ports:
+      - "${FILEBROWSER_PORT}:80"
+    volumes:
+      - workdir:/srv
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+    environment:
+      - FB_NOAUTH=true
+      - FB_BASEURL=/filebrowser
+    depends_on:
+      - vde
+
+volumes:
+  workdir:
