@@ -79,7 +79,7 @@ _poky_dock() {
     )
 
     mkdir -p ${PROJECT_TOP}/${POKY_TMP_DIR}
-    docker-compose -f ${PROJECT_TOP}/docker-compose.${ENV_ARCH}.yml run "${docker_args[@]}"
+    docker compose -f ${PROJECT_TOP}/docker-compose.${ENV_ARCH}.yml run "${docker_args[@]}"
 }
 
 # Should be part of poky image
