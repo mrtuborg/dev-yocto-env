@@ -108,13 +108,13 @@ _poky_dock() {
 print() {
     case $1 in
         machines)
-            find . -type f -path '*/machine/*.conf' -exec basename {} .conf \; | sort | xargs -I {} echo -n "{}, " | sed 's/, $/\n/'
+            find . -type f -path '*/machine/*.conf' -exec basename {} .conf \; | grep ${2} | sort | xargs -I {} echo -n "{}, " | sed 's/, $/\n/'
             ;;
         images)
-            find . -type f -path '*/images/*.bb' -exec basename {} .bb \; | sort | xargs -I {} echo -n "{}, " | sed 's/, $/\n/'
+            find . -type f -path '*/images/*.bb' -exec basename {} .bb \; | grep ${2} | sort | xargs -I {} echo -n "{}, " | sed 's/, $/\n/'
             ;;
         distro)
-            find . -type f -name '*.conf' -exec grep -H 'DISTRO =' {} \; | cut -d '=' -f 2 | tr -d ' \"' | sort | uniq
+            find . -type f -name '*.conf' -exec grep -H 'DISTRO =' {} \; | grep ${2} | cut -d '=' -f 2 | tr -d ' \"' | sort | uniq
             ;;
     esac
 
