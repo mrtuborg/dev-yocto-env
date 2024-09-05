@@ -34,7 +34,7 @@ WORKDIR_UID=1000
 WORKDIR_GID=1000
 
 
-POKY_IMAGE=roommatedev01.azurecr.io/vari-buildenv:22.04
+POKY_IMAGE=roommatedev01.azurecr.io/kirkstone-buildenv:22.04
 #POKY_IMAGE=snabel/var-env-22.04
 #TOASTER_IMAGE=roommatedev01.azurecr.io/toaster:${PROJECT_VER}
 VOLUME_NAME=${PROJECT_NAME}-${ENV_ARCH}
@@ -82,29 +82,6 @@ _poky_dock() {
     docker compose -f ${PROJECT_TOP}/docker-compose.${ENV_ARCH}.yml run "${docker_args[@]}"
 }
 
-# Should be part of poky image
-# _toaster() {
-#   BUILDPLATFORM="${1}"
-#    shift 1
-#
-#    local docker_args=(
-#        --platform ${BUILDPLATFORM}
-#        -it --rm
-#        --name=${PROJECT_NAME}-toaster-${PROJECT_VER}
-#        --hostname=${PROJECT_NAME}-toaster
-#        -v ${PROJECT_TOP}:${WORKSPACE_PATH}
-#        -v ${VOLUME_NAME}_workdir:/workdir
-#        -v /etc/localtime:/etc/localtime:ro
-#        -v /etc/timezone:/etc/timezone:ro
-#        -w "${WORKSPACE_PATH}"
-#        -p ${TOASTER_WEBUI}:8000
-#        ${TOASTER_IMAGE} /bin/bash -c "$@"
-#    )
-#    mkdir -p ${PROJECT_TOP}/${POKY_TMP_DIR}
-#    docker run "${docker_args[@]}"
-#}
-
-
 print() {
     case $1 in
         machines)
@@ -138,34 +115,30 @@ poky() {
     case ${COMMAND_TO_RUN} in
         shell)
             _poky_dock linux/${ENV_ARCH} "${ARGS}"
-        #_poky_dock linux/amd64 \
-            #        "source ${POKY_ENVIRONMENT} build;  \
-            #         export HISTFILE=${SHELL_HISTFILE}; \
-            #     bash"
             ;;
         run)
             shift
             _poky_dock linux/${ENV_ARCH} \
             "source poky/oe-init-build-env build; $*" | _beautifier
             ;;
-#        toaster)
-#            shift
-#            BUILD_DIR="${1}"
-#            # SET_ENVIRONMENT="setup-environment"
-#
-#            if [ -z "${BUILD_DIR}" ]; then
-#                echo "Please specify build directory"
-#                return 1
-#            fi
-#
-#            _toaster linux/${ENV_ARCH} \
-#                    "export HISTFILE=${SHELL_HISTFILE}; \
-#                    toaster-launch.sh \
-#                        ${WORKSPACE_PATH} \
-#                        ${WORKSPACE_PATH}/${POKY_TOOLCHAIN_PATH} \
-#                        ${BUILD_DIR} \
-#                        ${SET_ENVIRONMENT}"
-#            ;;
+        toaster)
+            shift
+            BUILD_DIR="${1}"
+            # SET_ENVIRONMENT="setup-environment"
+
+            if [ -z "${BUILD_DIR}" ]; then
+                echo "Please specify build directory"
+                return 1
+            fi
+
+            _poky_dock linux/${ENV_ARCH} \
+                    "export HISTFILE=${SHELL_HISTFILE}; \
+                    toaster-launch.sh \
+                        ${WORKSPACE_PATH} \
+                        ${WORKSPACE_PATH}/${POKY_TOOLCHAIN_PATH} \
+                        ${BUILD_DIR} \
+                        ${SET_ENVIRONMENT}"
+            ;;
     esac
 }
 
