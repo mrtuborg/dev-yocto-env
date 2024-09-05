@@ -6,8 +6,10 @@ services:
       [
         "/bin/sh",
         "-c",
-        "touch /workdir/.initialized; chown -hR ${WORKDIR_UID}:${WORKDIR_GID} /workdir",
+        "touch /workdir/.initialized; chown -hR ${WORKDIR_UID}:${WORKDIR_GID} /workdir"
       ]
+    ports:
+      - "${TOASTER_WEBUI}:8000"
     volumes:
       - ${PROJECT_TOP}:${WORKSPACE_PATH}
       - workdir:/workdir
