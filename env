@@ -5,7 +5,15 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     echo "Use: source ${BASH_SOURCE[0]}"
     exit 1
 fi
-SCRIPT_DIR=$( dirname $(realpath "$0") )
+
+thisFile="${BASH_SOURCE[0]}"
+
+# Zsh:
+[ -z "${thisFile}" ] && thisFile="${(%):-%x}"
+# Unsupported shell
+[ -z "${thisFile}" ] && echo "Shell is unsopported" && exit 1
+
+SCRIPT_DIR=$( dirname $(realpath "${thisFile}") )
 echo "Script directory: ${SCRIPT_DIR}"
 
 # Set the architecture of the environment
