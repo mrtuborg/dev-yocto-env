@@ -6,7 +6,7 @@ services:
       [
         "/bin/sh",
         "-c",
-        "touch /workdir/.initialized; chown -hR ${WORKDIR_UID}:${WORKDIR_GID} /workdir"
+        "touch /workdir/.initialized; chown -hR ${WORKDIR_UID}:${WORKDIR_GID} /workdir",
       ]
     ports:
       - "${TOASTER_WEBUI}:8000"
@@ -33,6 +33,25 @@ services:
     environment:
       - FB_NOAUTH=true
       - FB_BASEURL=/filebrowser
+    depends_on:
+      - vde
+
+  netboot-server:
+    image: ${NETBOOT_SERVER_IMAGE}
+    platform: linux/${ENV_ARCH}
+    container_name: "${VOLUME_NAME}_netboot-server"
+    privileged: true
+    network_mode: "bridge"
+    volumes:
+      - workdir:/workdir:rw
+    ports:
+      - "2049:2049/udp"
+      - "35111:111/udp"
+      - "20048:20048/udp"
+      - "32765-32769:32765-32769/udp"
+    environment:
+      - NFS_SERVER_DEBUG=1
+      - NFSROOT_DIR=/workdir/nfsroot
     depends_on:
       - vde
 

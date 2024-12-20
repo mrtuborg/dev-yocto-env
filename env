@@ -43,12 +43,13 @@ WORKDIR_GID=1000
 
 
 POKY_IMAGE=your-registry.azurecr.io/kirkstone-buildenv:22.04
-#POKY_IMAGE=snabel/var-env-22.04
+NETBOOT_SERVER_IMAGE=your-registry.azurecr.io/netboot-server:latest
 #TOASTER_IMAGE=your-registry.azurecr.io/toaster:${PROJECT_VER}
 VOLUME_NAME=${PROJECT_NAME}-${ENV_ARCH}
 
 # Export environment variables for docker-compose
 export POKY_IMAGE
+export NETBOOT_SERVER_IMAGE
 export PROJECT_TOP
 export PROJECT_NAME
 # export PROJECT_VER
@@ -68,6 +69,24 @@ docker compose \
     -f ${PROJECT_TOP}/docker-compose.${ENV_ARCH}.yml \
     --project-name "${VOLUME_NAME}" \
     up -d
+
+run_nfs_server() {
+    sudo ${SCRIPT_DIR}/scripts/start_socat.sh >> socat_nfs.log 2>&1
+}
+
+stop_nfs_server() {
+    sudo ${SCRIPT_DIR}/scripts/stop_socat.sh >> socat_nfs.log 2>&1
+}
+
+status_nfs_server() {
+    local count
+    count=$(sudo sh -c "ps -ax | grep socat | grep -v grep | wc -l" | xargs)
+    if [ "$count" -ne 0 ]; then
+        echo "NFS server is running"
+    else
+        echo "NFS server is not running"
+    fi
+}
 
 #_beautifier() {
 #    sed "s|${WORKSPACE_PATH}\/|${PROJECT_TOP}\/|g" # Jump-to-code by click support for VSCode
@@ -176,6 +195,12 @@ echo "============================================"
 echo " * poky shell           - start yocto/poky interactive container shell"
 echo " * poky toaster <dir>   - start yocto/poky toaster interactive container shell within specified build directory"
 echo " * poky run             - execute specified command in Poky build environment non-interactively"
+echo
 echo " * print machines       - list all available machine configurations"
 echo " * print images         - list all available images"
 echo " * print distro         - list all available distros"
+echo
+echo " * run_nfs_server       - starting netboot NFSv3 server"
+echo " * stop_nfs_server      - stopping netboot NFSv3 server"
+echo " * status_nfs_server    - chaeck the status of NFSv3 server"
+
