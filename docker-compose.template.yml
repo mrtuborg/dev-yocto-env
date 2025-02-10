@@ -1,6 +1,12 @@
 services:
   vde:
-    image: ${POKY_IMAGE}
+    build: 
+      dockerfile: Dockerfile_22.04
+      context: .poky-vde
+      args:
+        USER_ID: ${WORKDIR_UID}
+        USER_GID: ${WORKDIR_GID}
+    # image: ${POKY_IMAGE}
     platform: linux/${ENV_ARCH}
     command:
       [

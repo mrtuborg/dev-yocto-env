@@ -38,8 +38,8 @@ else
 fi
 
 TOASTER_WEBUI=9090
-WORKDIR_UID=1000
-WORKDIR_GID=1000
+WORKDIR_UID=`id -u $USER`
+WORKDIR_GID=`id -g $USER`
 
 
 POKY_IMAGE=your-registry.azurecr.io/kirkstone-buildenv:22.04
@@ -59,6 +59,7 @@ export WORKDIR_GID
 export FILEBROWSER_PORT
 export ENV_ARCH
 export VOLUME_NAME
+export TOASTER_WEBUI
 
 # Replace the environment variable in the template and generate docker-compose.yml
 envsubst < ${SCRIPT_DIR}/docker-compose.template.yml > docker-compose.${ENV_ARCH}.yml
