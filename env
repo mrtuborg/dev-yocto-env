@@ -38,9 +38,14 @@ else
 fi
 
 TOASTER_WEBUI=9090
-WORKDIR_UID=`id -u $USER`
-WORKDIR_GID=`id -g $USER`
+WORKDIR_UID=1000
+WORKDIR_GID=1000
 
+# Redefine WORKDIR_UID and WORKDIR_GID only if on a Linux machine
+if [[ "$(uname -s)" == "Linux" ]]; then
+    WORKDIR_UID=$(id -u $USER)
+    WORKDIR_GID=$(id -g $USER)
+fi
 
 POKY_IMAGE=your-registry.azurecr.io/kirkstone-buildenv:22.04
 NETBOOT_SERVER_IMAGE=your-registry.azurecr.io/netboot-server:latest
@@ -70,6 +75,9 @@ docker compose \
     -f ${PROJECT_TOP}/docker-compose.${ENV_ARCH}.yml \
     --project-name "${VOLUME_NAME}" \
     up -d
+
+# For docker-compose down:
+# docker compose -f docker-compose.${ENV_ARCH}.yml down --remove-orphans
 
 run_nfs_server() {
     sudo ${SCRIPT_DIR}/scripts/start_socat.sh >> socat_nfs.log 2>&1
