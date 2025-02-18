@@ -31,10 +31,17 @@ PROJECT_NAME=$(basename ${PROJECT_TOP} | tr '.' '-')
 POKY_TMP_DIR=poky_tmp
 WORKSPACE_PATH=/workspace
 
+#90xx -> other services like toaster
+#91xx -> hw1
+#92xx -> hw2
+#93xx -> hw3
+
 if [ "${ENV_ARCH}" = "x86_64" ]; then
-    FILEBROWSER_PORT=9000
-else
-    FILEBROWSER_PORT=9001
+    FILEBROWSER_PORT=9200
+    DL_PORT=9210
+else # I dont think we need different port on arch but on hw 
+    FILEBROWSER_PORT=9201
+    DL_PORT=9211
 fi
 
 TOASTER_WEBUI=9090
@@ -65,6 +72,7 @@ export FILEBROWSER_PORT
 export ENV_ARCH
 export VOLUME_NAME
 export TOASTER_WEBUI
+export DL_PORT
 
 # Replace the environment variable in the template and generate docker-compose.yml
 envsubst < ${SCRIPT_DIR}/docker-compose.template.yml > docker-compose.${ENV_ARCH}.yml
@@ -118,6 +126,23 @@ _poky_dock() {
     docker compose -f ${PROJECT_TOP}/docker-compose.${ENV_ARCH}.yml run "${docker_args[@]}"
 }
 
+# cant use -it from the pipeline
+_poky_dock_cmd() {
+    local BUILDPLATFORM="${1}"
+    local COMMAND_TO_RUN="${2}"
+
+    local docker_args=(
+        -u vari
+        --rm
+        -v ${VOLUME_NAME}_workdir:/workdir
+        -w "${WORKSPACE_PATH}"
+        vde # what is this?
+        /bin/bash -c "${COMMAND_TO_RUN}"
+    )
+
+    docker compose -f ${PROJECT_TOP}/docker-compose.${ENV_ARCH}.yml run "${docker_args[@]}"
+}
+
 print() {
     local print_filter="${2:-}"
 
@@ -162,8 +187,7 @@ poky() {
             ;;
         run)
             shift
-            _poky_dock linux/${ENV_ARCH} \
-            "source poky/oe-init-build-env build; $*" | _beautifier
+            _poky_dock_cmd linux/${ENV_ARCH} "source $POKY_TOOLCHAIN_PATH/oe-init-build-env build_roomboard; $*" 
             ;;
         toaster)
             shift
