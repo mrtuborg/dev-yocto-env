@@ -14,7 +14,6 @@ thisFile="${BASH_SOURCE[0]}"
 [ -z "${thisFile}" ] && echo "Shell is unsopported" && exit 1
 
 SCRIPT_DIR=$( dirname $(realpath "${thisFile}") )
-echo "Script directory: ${SCRIPT_DIR}"
 
 # Set the architecture of the environment
 # Priorities:
@@ -23,30 +22,51 @@ echo "Script directory: ${SCRIPT_DIR}"
 # 3. uname -m
 ENV_ARCH=${1:-${ENV_ARCH:-$(uname -m)}}
 
-echo "Environment: ${ENV_ARCH}"
+POKY_IMAGE=your-registry.azurecr.io/kirkstone-buildenv:22.04
+NETBOOT_SERVER_IMAGE=your-registry.azurecr.io/netboot-server:latest
 
+# Currently for the simplicity, we are using the VDE image for toaster
+# TOASTER_IMAGE=your-registry.azurecr.io/toaster:${PROJECT_VER}
 
-PROJECT_TOP=$(git rev-parse --show-toplevel)
-PROJECT_NAME=$(basename ${PROJECT_TOP} | tr '.' '-')
-POKY_TMP_DIR=poky_tmp
-WORKSPACE_PATH=/workspace
+_load_default_exports() {
+    echo "Environment: ${ENV_ARCH}"
+    PROJECT_TOP=$(git rev-parse --show-toplevel)
+    PROJECT_NAME=$(basename ${PROJECT_TOP} | tr '.' '-')
+    POKY_TMP_DIR=poky_tmp
+    WORKSPACE_PATH=/workspace
 
-#90xx -> other services like toaster
-#91xx -> hw1
-#92xx -> hw2
-#93xx -> hw3
-
-if [ "${ENV_ARCH}" = "x86_64" ]; then
+    VOLUME_NAME=${PROJECT_NAME}-${ENV_ARCH}
     FILEBROWSER_PORT=9200
     DL_PORT=9210
-else # I dont think we need different port on arch but on hw 
-    FILEBROWSER_PORT=9201
-    DL_PORT=9211
-fi
 
-TOASTER_WEBUI=9090
-WORKDIR_UID=1000
-WORKDIR_GID=1000
+    TOASTER_WEBUI=9090
+    WORKDIR_UID=1000
+    WORKDIR_GID=1000
+
+    # Export environment variables for docker-compose
+    export POKY_IMAGE
+    export NETBOOT_SERVER_IMAGE
+    export PROJECT_TOP
+    export PROJECT_NAME
+    export WORKSPACE_PATH
+    export WORKDIR_UID
+    export WORKDIR_GID
+    export FILEBROWSER_PORT
+    export ENV_ARCH
+    export VOLUME_NAME
+    export TOASTER_WEBUI
+    export DL_PORT
+}
+
+_unload_default_exports() {
+    # Unexport environment variables for docker-compose
+    unset POKY_IMAGE
+    unset PROJECT_NAME
+    unset WORKSPACE_PATH
+    unset FILEBROWSER_PORT
+    unset VOLUME_NAME
+}
+
 
 # Redefine WORKDIR_UID and WORKDIR_GID only if on a Linux machine
 if [[ "$(uname -s)" == "Linux" ]]; then
@@ -54,62 +74,15 @@ if [[ "$(uname -s)" == "Linux" ]]; then
     WORKDIR_GID=$(id -g $USER)
 fi
 
-POKY_IMAGE=your-registry.azurecr.io/kirkstone-buildenv:22.04
-NETBOOT_SERVER_IMAGE=your-registry.azurecr.io/netboot-server:latest
-#TOASTER_IMAGE=your-registry.azurecr.io/toaster:${PROJECT_VER}
-VOLUME_NAME=${PROJECT_NAME}-${ENV_ARCH}
-
-# Export environment variables for docker-compose
-export POKY_IMAGE
-export NETBOOT_SERVER_IMAGE
-export PROJECT_TOP
-export PROJECT_NAME
-# export PROJECT_VER
-export WORKSPACE_PATH
-export WORKDIR_UID
-export WORKDIR_GID
-export FILEBROWSER_PORT
-export ENV_ARCH
-export VOLUME_NAME
-export TOASTER_WEBUI
-export DL_PORT
 
 # Replace the environment variable in the template and generate docker-compose.yml
 envsubst < ${SCRIPT_DIR}/docker-compose.template.yml > docker-compose.${ENV_ARCH}.yml
-
-# Run docker-compose up
-echo "Running compose for ${VOLUME_NAME}"
-docker compose \
-    -f ${PROJECT_TOP}/docker-compose.${ENV_ARCH}.yml \
-    --project-name "${VOLUME_NAME}" \
-    up -d
-
-# For docker-compose down:
-# docker compose -f docker-compose.${ENV_ARCH}.yml down --remove-orphans
-
-run_nfs_server() {
-    sudo ${SCRIPT_DIR}/scripts/start_socat.sh >> socat_nfs.log 2>&1
-}
-
-stop_nfs_server() {
-    sudo ${SCRIPT_DIR}/scripts/stop_socat.sh >> socat_nfs.log 2>&1
-}
-
-status_nfs_server() {
-    local count
-    count=$(sudo sh -c "ps -ax | grep socat | grep -v grep | wc -l" | xargs)
-    if [ "$count" -ne 0 ]; then
-        echo "NFS server is running"
-    else
-        echo "NFS server is not running"
-    fi
-}
 
 #_beautifier() {
 #    sed "s|${WORKSPACE_PATH}\/|${PROJECT_TOP}\/|g" # Jump-to-code by click support for VSCode
 #}
 
-_poky_dock() {
+_poky_dock() { # Poky dock in interactive mode
     local BUILDPLATFORM="${1}"
     local COMMAND_TO_RUN="${2}"
 
@@ -118,16 +91,17 @@ _poky_dock() {
         -it --rm
         -v ${VOLUME_NAME}_workdir:/workdir
         -w "${WORKSPACE_PATH}"
-        vde
+        vde # Start only the vde container
         /bin/bash -c "${COMMAND_TO_RUN}"
     )
 
     mkdir -p ${PROJECT_TOP}/${POKY_TMP_DIR}
-    docker compose -f ${PROJECT_TOP}/docker-compose.${ENV_ARCH}.yml run "${docker_args[@]}"
+    docker compose -f ${PROJECT_TOP}/docker-compose.${ENV_ARCH}.yml \
+        -p "${VOLUME_NAME}" \
+        run "${docker_args[@]}"
 }
 
-# cant use -it from the pipeline
-_poky_dock_cmd() {
+_poky_dock_cmd() { # Poky dock in non-interactive mode
     local BUILDPLATFORM="${1}"
     local COMMAND_TO_RUN="${2}"
 
@@ -136,14 +110,16 @@ _poky_dock_cmd() {
         --rm
         -v ${VOLUME_NAME}_workdir:/workdir
         -w "${WORKSPACE_PATH}"
-        vde # what is this?
+        vde # Start only the vde container
         /bin/bash -c "${COMMAND_TO_RUN}"
     )
 
-    docker compose -f ${PROJECT_TOP}/docker-compose.${ENV_ARCH}.yml run "${docker_args[@]}"
+    docker compose -f ${PROJECT_TOP}/docker-compose.${ENV_ARCH}.yml \
+        -p "${VOLUME_NAME}" \
+        run "${docker_args[@]}"
 }
 
-print() {
+info() {
     local print_filter="${2:-}"
 
     case $1 in
@@ -167,73 +143,197 @@ print() {
 }
 
 poky() {
+    _load_default_exports
     local POKY_TOOLCHAIN_PATH="sources/poky"
     local TOASTER_ENVIRONMENT="${POKY_TOOLCHAIN_PATH}/oe-init-build-env"
     local POKY_ENVIRONMENT="${WORKSPACE_PATH}/setup-environment"
     local SHELL_HISTFILE="${WORKSPACE_PATH}/${POKY_TMP_DIR}/poky_shell_history"
-    local COMMAND_TO_RUN="$1"
-    local ARGS="$2"
+    local COMMAND_TO_RUN="${1}"
+
+    
+    shift 1
+    local ARGS=("${@}") # ARGS array, could contain DIR as the 1st element
+    local BUILD_DIR=""
+    local REMAINING_ARGS=""
     local SHELL="export HISTFILE=${SHELL_HISTFILE}; /bin/bash"
 
-    if [ -z "${ARGS}" ]; then
-        ARGS="${SHELL}"
-    else
-        ARGS="source ${POKY_ENVIRONMENT} ${ARGS}; ${SHELL}"
+    if [ -n "${ARGS}" ]; then            # All this make sense only if we have arguments
+        if [ "${#ARGS[@]}" -lt 2 ]; then # One argument case
+            if [ -d "${ARGS}" ]; then    # This one argument could be directory or exec command
+                BUILD_DIR="${ARGS}"
+            else
+                REMAINING_ARGS="${ARGS[*]}"
+            fi
+        else                             # More than one argument case
+            if [ -d "${ARGS[1]}" ]; then # 1st argument is directory
+                BUILD_DIR=${ARGS[1]}
+                ARGS=("${ARGS[@]:1}")    # Removing the 1st element
+            fi
+            REMAINING_ARGS="${ARGS[@]}"  # Remaining part is exec command
+        fi
     fi
+
+    # Replace the environment variable in the template and generate docker-compose.yml
+    envsubst < ${SCRIPT_DIR}/docker-compose.template.yml > docker-compose.${ENV_ARCH}.yml
 
     case ${COMMAND_TO_RUN} in
         shell)
-            _poky_dock linux/${ENV_ARCH} "${ARGS}"
+            if [ -n "${BUILD_DIR}" ]; then
+                _poky_dock linux/${ENV_ARCH} "source ${POKY_ENVIRONMENT} ${BUILD_DIR}; ${SHELL}"
+            else 
+                _poky_dock linux/${ENV_ARCH} "${SHELL}"
+            fi
             ;;
         run)
-            shift
-            _poky_dock_cmd linux/${ENV_ARCH} "source $POKY_TOOLCHAIN_PATH/oe-init-build-env build_roomboard; $*" 
+            if [ -n "${BUILD_DIR}" ]; then
+                _poky_dock_cmd linux/${ENV_ARCH} "source ${POKY_ENVIRONMENT} ${BUILD_DIR}; ${REMAINING_ARGS}" 
+            else
+                _poky_dock_cmd linux/${ENV_ARCH} "${REMAINING_ARGS}"
+            fi
             ;;
-        toaster)
-            shift
-            BUILD_DIR="${1}"
-            # SET_ENVIRONMENT="setup-environment"
-
+        toaster)            
             if [ -z "${BUILD_DIR}" ]; then
                 echo "Please specify build directory"
                 return 1
             fi
+
+            local PORT="${REMAINING_ARGS:-${TOASTER_WEBUI}}"
+            export TOASTER_WEBUI="${PORT}" # Set the environment variable for filebrowser port
+            # Replace the environment variable in the template and generate docker-compose.yml
+            envsubst < ${SCRIPT_DIR}/docker-compose.template.yml > docker-compose.${ENV_ARCH}.yml
 
             _poky_dock linux/${ENV_ARCH} \
                     "export HISTFILE=${SHELL_HISTFILE}; \
                     toaster-launch.sh \
                         ${WORKSPACE_PATH} \
                         ${WORKSPACE_PATH}/${POKY_TOOLCHAIN_PATH} \
-                        ${BUILD_DIR} \
-                        ${SET_ENVIRONMENT}"
+                        ${BUILD_DIR}"
+            ;;
+        *)
+            echo "Usage: poky {shell|run|toaster} [args]"
+            return 1
+            ;;
+    esac
+     _unload_default_exports
+}
+
+nfs_server() {
+    local COMMAND="$1"
+
+    case ${COMMAND} in
+        start)
+            sudo ${SCRIPT_DIR}/scripts/start_socat.sh >> socat_nfs.log 2>&1
+            ;;
+        stop)
+            sudo ${SCRIPT_DIR}/scripts/stop_socat.sh >> socat_nfs.log 2>&1
+            ;;
+        status)
+            local count
+            count=$(sudo sh -c "ps -ax | grep socat | grep -v grep | wc -l" | xargs)
+            if [ "$count" -ne 0 ]; then
+                echo "NFS server is running"
+            else
+                echo "NFS server is not running"
+            fi
+            ;;
+        *)
+            echo "Usage: nfs_server {start|stop|status}"
+            return 1
             ;;
     esac
 }
 
-# Unexport environment variables for docker-compose
-unset POKY_IMAGE
-# keep PROJECT_TOP
-unset PROJECT_NAME
-# unset PROJECT_VER
-# keep WORKSPACE_PATH
-unset WORKDIR_UID
-unset WORKDIR_GID
-unset FILEBROWSER_PORT
-# keep ENV_ARCH as default
-# keep VOLUME_NAME
+filebrowser() {
+    local COMMAND="$1"
+    local PORT="${2:-${FILEBROWSER_PORT}}" # Use the second argument or default to FILEBROWSER_PORT
+    _load_default_exports
+
+    case ${COMMAND} in
+        start)
+            export FILEBROWSER_PORT="${PORT}" # Set the environment variable for filebrowser port
+            # Replace the environment variable in the template and generate docker-compose.yml
+            envsubst < ${SCRIPT_DIR}/docker-compose.template.yml > docker-compose.${ENV_ARCH}.yml
+
+            docker compose -f ${PROJECT_TOP}/docker-compose.${ENV_ARCH}.yml \
+                -p "${VOLUME_NAME}" \
+                up -d filebrowser
+
+            ;;
+        stop)
+            docker compose -f ${PROJECT_TOP}/docker-compose.${ENV_ARCH}.yml \
+                -p "${VOLUME_NAME}" \
+                stop filebrowser
+            ;;
+        status)
+            docker compose -f ${PROJECT_TOP}/docker-compose.${ENV_ARCH}.yml \
+                -p "${VOLUME_NAME}" \
+                ps filebrowser
+            ;;
+        *)
+            echo "Usage: filebrowser {start|stop|status}"
+            return 1
+            ;;
+    esac
+
+    _unload_default_exports
+}
+
+rpm-host() {
+    local COMMAND="$1"
+    local PORT="${2:-${DL_PORT}}" # Use the second argument or default to DL_PORT
+
+    _load_default_exports
+    case ${COMMAND} in
+        start)
+            export DL_PORT="${PORT}" # Set the environment variable for filebrowser port
+            # Replace the environment variable in the template and generate docker-compose.yml
+            envsubst < ${SCRIPT_DIR}/docker-compose.template.yml > docker-compose.${ENV_ARCH}.yml
+
+            docker compose -f ${PROJECT_TOP}/docker-compose.${ENV_ARCH}.yml \
+                -p "${VOLUME_NAME}" \
+                up -d rpm-host
+            ;;
+        stop)
+            docker compose -f ${PROJECT_TOP}/docker-compose.${ENV_ARCH}.yml \
+                -p "${VOLUME_NAME}" \
+                stop rpm-host
+            ;;
+        status)
+            docker compose -f ${PROJECT_TOP}/docker-compose.${ENV_ARCH}.yml \
+                -p "${VOLUME_NAME}" \
+                ps rpm-host
+            ;;
+        *)
+            echo "Usage: rpm-host {start|stop|status}"
+            return 1
+            ;;
+    esac
+    _unload_default_exports
+}
+
+_unload_default_exports
 
 echo
 echo " This environment has following functions:"
 echo "============================================"
-echo " * poky shell           - start yocto/poky interactive container shell"
-echo " * poky toaster <dir>   - start yocto/poky toaster interactive container shell within specified build directory"
-echo " * poky run             - execute specified command in Poky build environment non-interactively"
+echo " * poky shell [<dir>]   - start yocto/poky interactive container shell"
+echo " * poky toaster <dir>   - start yocto/poky toaster interactive container"
+echo " * poky run [<dir>]     - execute specified command in Poky build non-interactively"
 echo
-echo " * print machines       - list all available machine configurations"
-echo " * print images         - list all available images"
-echo " * print distro         - list all available distros"
+echo " * info machines        - list all available machine configurations"
+echo " * info images          - list all available images"
+echo " * info distro          - list all available distros"
 echo
-echo " * run_nfs_server       - starting netboot NFSv3 server"
-echo " * stop_nfs_server      - stopping netboot NFSv3 server"
-echo " * status_nfs_server    - chaeck the status of NFSv3 server"
+echo " * nfs-server start     - starting netboot NFSv3 server"
+echo " * nfs-server stop      - stopping netboot NFSv3 server"
+echo " * nfs-server status    - check the status of NFSv3 server"
+echo
+echo " * filebrowser start [<PORT>] - start filebrowser"
+echo " * filebrowser stop           - stop filebrowser"
+echo " * filebrowser status         - check the status of filebrowser"
+echo
+echo " * rpm-host start [<PORT>]    - start rpm repo local hosting"
+echo " * rpm-host stop              - stop rpm repo local hosting"
+echo " * rpm-host status            - check the status of rpm repo local hosting"
+echo
 

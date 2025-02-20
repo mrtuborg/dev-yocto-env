@@ -1,11 +1,13 @@
 services:
   vde:
-    build: 
+    build:
       dockerfile: Dockerfile_22.04
       context: ./poky-vde
       args:
         USER_ID: ${WORKDIR_UID}
         USER_GID: ${WORKDIR_GID}
+        POKY_REPO: https://github.com/yoctoproject/poky.git
+        POKY_COMMIT_ID: 6505459809380ddcf152a09343e4dc55038de332
     # image: ${POKY_IMAGE}
     platform: linux/${ENV_ARCH}
     command:
@@ -22,6 +24,7 @@ services:
       - ${HOME}/.ssh:/home/vari/.ssh
       - /etc/localtime:/etc/localtime:ro
       - /etc/timezone:/etc/timezone:ro
+    # root user is using only for initialization
     user: root
     container_name: "${PROJECT_NAME}-${ENV_ARCH}"
     hostname: "${PROJECT_NAME}-${ENV_ARCH}"
@@ -42,13 +45,16 @@ services:
     depends_on:
       - vde
 
-  # Because I couldnt download files
   rpm-host:
-    image: fedora/apache
+    image: httpd:2.4.63-bookworm
+    platform: linux/${ENV_ARCH}
+    container_name: "${VOLUME_NAME}_rpm-host"
     ports:
       - ${DL_PORT}:80
     volumes:
-        - workdir:/var/www/html/yocto
+      - workdir:/var/www/html/yocto
+    depends_on:
+      - vde
 
   netboot-server:
     image: ${NETBOOT_SERVER_IMAGE}
