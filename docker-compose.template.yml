@@ -14,7 +14,7 @@ services:
       [
         "/bin/sh",
         "-c",
-        "touch /workdir/.initialized; chown -hR ${WORKDIR_UID}:${WORKDIR_GID} /workdir",
+        "echo 'Workdir starting initialization'; touch /workdir/.initialized && echo 'Workdir created' || echo 'Failed to create workdir'; chown -hR ${WORKDIR_UID}:${WORKDIR_GID} /workdir && echo 'Ownership changed' || echo 'Failed to change ownership';",
       ]
     ports:
       - "${TOASTER_WEBUI}:8000"
@@ -77,4 +77,5 @@ services:
 
 volumes:
   workdir:
-#   name: ${VOLUME_NAME}
+    name: ${VOLUME_NAME}_workdir
+    external: true
