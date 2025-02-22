@@ -29,7 +29,6 @@ NETBOOT_SERVER_IMAGE=roommatedev01.azurecr.io/netboot-server:latest
 # TOASTER_IMAGE=roommatedev01.azurecr.io/toaster:${PROJECT_VER}
 
 _load_default_exports() {
-    echo "Environment: ${ENV_ARCH}"
     PROJECT_TOP=$(git rev-parse --show-toplevel)
     PROJECT_NAME=$(basename ${PROJECT_TOP} | tr '.' '-')
     POKY_TMP_DIR=poky_tmp
@@ -42,6 +41,9 @@ _load_default_exports() {
     TOASTER_WEBUI=9090
     WORKDIR_UID=1000
     WORKDIR_GID=1000
+
+    echo "Environment: ${ENV_ARCH}"
+    echo "Workdir volume: ${VOLUME_NAME}_workdir"
 
     # Export environment variables for docker-compose
     export POKY_IMAGE
@@ -74,9 +76,13 @@ if [[ "$(uname -s)" == "Linux" ]]; then
     WORKDIR_GID=$(id -g $USER)
 fi
 
+_load_default_exports
 
 # Replace the environment variable in the template and generate docker-compose.yml
 envsubst < ${SCRIPT_DIR}/docker-compose.template.yml > docker-compose.${ENV_ARCH}.yml
+
+docker volume create ${VOLUME_NAME}_workdir
+docker compose -f docker-compose.${ENV_ARCH}.yml run --rm vde
 
 #_beautifier() {
 #    sed "s|${WORKSPACE_PATH}\/|${PROJECT_TOP}\/|g" # Jump-to-code by click support for VSCode
