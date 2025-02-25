@@ -10,11 +10,16 @@ services:
         POKY_COMMIT_ID: 6505459809380ddcf152a09343e4dc55038de332
     # image: ${POKY_IMAGE}
     platform: linux/${ENV_ARCH}
-    command:
-      [
+    command: [
         "/bin/sh",
         "-c",
-        "echo 'Workdir starting initialization'; touch /workdir/.initialized && echo 'Workdir created' || echo 'Failed to create workdir'; chown -hR ${WORKDIR_UID}:${WORKDIR_GID} /workdir && echo 'Ownership changed' || echo 'Failed to change ownership';",
+        "if [ ! -f /workdir/.initialized ]; then \
+        echo 'Workdir starting initialization'; \
+        touch /workdir/.initialized && echo 'Workdir created' || echo 'Failed to create workdir'; \
+        chown -hR ${WORKDIR_UID}:${WORKDIR_GID} /workdir && echo 'Ownership changed' || echo 'Failed to change ownership'; \
+        else \
+        echo 'Workdir already initialized'; \
+        fi",
       ]
     ports:
       - "${TOASTER_WEBUI}:8000"

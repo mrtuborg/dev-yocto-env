@@ -43,7 +43,7 @@ _load_default_exports() {
     WORKDIR_GID=1000
 
     echo "Environment: ${ENV_ARCH}"
-    echo "Workdir volume: ${VOLUME_NAME}_workdir"
+    #echo "Workdir volume: ${VOLUME_NAME}_workdir"
 
     # Export environment variables for docker-compose
     export POKY_IMAGE
@@ -81,7 +81,7 @@ _load_default_exports
 # Replace the environment variable in the template and generate docker-compose.yml
 envsubst < ${SCRIPT_DIR}/docker-compose.template.yml > docker-compose.${ENV_ARCH}.yml
 
-docker volume create ${VOLUME_NAME}_workdir
+docker volume create ${VOLUME_NAME}_workdir > /dev/null 2>&1
 docker compose -f docker-compose.${ENV_ARCH}.yml run --rm vde
 
 #_beautifier() {
