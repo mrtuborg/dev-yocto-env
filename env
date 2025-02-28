@@ -22,13 +22,29 @@ SCRIPT_DIR=$( dirname $(realpath "${thisFile}") )
 # 3. uname -m
 ENV_ARCH=${1:-${ENV_ARCH:-$(uname -m)}}
 
-POKY_IMAGE=roommatedev01.azurecr.io/kirkstone-buildenv:22.04
-NETBOOT_SERVER_IMAGE=roommatedev01.azurecr.io/netboot-server:latest
+# Choose how to retrieve poky-vde image: build or pull
+# PULL_VDE environment variable (build by default)
+if [[ "${PULL_VDE}" == "true" ]]; then
+    echo "Pulling poky-vde image"
+    vde_build_behaviour=(--pull always)
+else
+    echo "Building poky-vde image"
+     # Use --build argument if you want to build the image forcefully each time
+    vde_build_behaviour=()
+fi
 
 # Currently for the simplicity, we are using the VDE image for toaster
 # TOASTER_IMAGE=roommatedev01.azurecr.io/toaster:${PROJECT_VER}
 
 _load_default_exports() {
+    YOCTO_RELEASE=kirkstone
+    VDE_VERSION=22.04
+    VDE_IMAGE=poky-vde
+    DOCKER_REGISTRY=roommatedev01.azurecr.io
+
+    POKY_IMAGE=${DOCKER_REGISTRY}/${VDE_IMAGE}:${YOCTO_RELEASE}-${VDE_VERSION}
+    NETBOOT_SERVER_IMAGE=roommatedev01.azurecr.io/netboot-server:latest
+
     PROJECT_TOP=$(git rev-parse --show-toplevel)
     PROJECT_NAME=$(basename ${PROJECT_TOP} | tr '.' '-')
     POKY_TMP_DIR=poky_tmp
@@ -81,47 +97,47 @@ _load_default_exports
 # Replace the environment variable in the template and generate docker-compose.yml
 envsubst < ${SCRIPT_DIR}/docker-compose.template.yml > docker-compose.${ENV_ARCH}.yml
 
+echo POKY_IMAGE=${POKY_IMAGE}
+
 docker volume create ${VOLUME_NAME}_workdir > /dev/null 2>&1
-docker compose -f docker-compose.${ENV_ARCH}.yml run --rm vde
+docker compose -f ${PROJECT_TOP}/docker-compose.${ENV_ARCH}.yml \
+        run --rm "${vde_build_behaviour[@]}" vde
 
-#_beautifier() {
-#    sed "s|${WORKSPACE_PATH}\/|${PROJECT_TOP}\/|g" # Jump-to-code by click support for VSCode
-#}
-
-_poky_dock() { # Poky dock in interactive mode
+_poky_dock() {
+    echo "Poky dock in interactive mode"
     local BUILDPLATFORM="${1}"
     local COMMAND_TO_RUN="${2}"
 
     local docker_args=(
         -u vari
         -it --rm
-        -v ${VOLUME_NAME}_workdir:/workdir
         -w "${WORKSPACE_PATH}"
+        "${vde_build_behaviour[@]}"
         vde # Start only the vde container
         /bin/bash -c "${COMMAND_TO_RUN}"
     )
 
     mkdir -p ${PROJECT_TOP}/${POKY_TMP_DIR}
+
     docker compose -f ${PROJECT_TOP}/docker-compose.${ENV_ARCH}.yml \
-        -p "${VOLUME_NAME}" \
         run "${docker_args[@]}"
 }
 
-_poky_dock_cmd() { # Poky dock in non-interactive mode
+_poky_dock_cmd() {
+    echo "Poky dock in non-interactive mode"
     local BUILDPLATFORM="${1}"
     local COMMAND_TO_RUN="${2}"
 
     local docker_args=(
         -u vari
         --rm
-        -v ${VOLUME_NAME}_workdir:/workdir
         -w "${WORKSPACE_PATH}"
+        "${vde_build_behaviour[@]}"
         vde # Start only the vde container
         /bin/bash -c "${COMMAND_TO_RUN}"
     )
 
     docker compose -f ${PROJECT_TOP}/docker-compose.${ENV_ARCH}.yml \
-        -p "${VOLUME_NAME}" \
         run "${docker_args[@]}"
 }
 
@@ -179,6 +195,7 @@ poky() {
         fi
     fi
 
+    echo POKY_IMAGE=${POKY_IMAGE}
     # Replace the environment variable in the template and generate docker-compose.yml
     envsubst < ${SCRIPT_DIR}/docker-compose.template.yml > docker-compose.${ENV_ARCH}.yml
 
