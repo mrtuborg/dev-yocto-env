@@ -30,7 +30,7 @@ if [[ "${PULL_VDE}" == "true" ]]; then
 else
     echo "Building poky-vde image"
      # Use --build argument if you want to build the image forcefully each time
-    vde_build_behaviour=()
+    vde_build_behaviour=(--build)
 fi
 
 # Currently for the simplicity, we are using the VDE image for toaster
