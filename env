@@ -55,8 +55,6 @@ _load_default_exports() {
     DL_PORT=9210
 
     TOASTER_WEBUI=9090
-    WORKDIR_UID=1000
-    WORKDIR_GID=1000
 
     echo "Environment: ${ENV_ARCH}"
     #echo "Workdir volume: ${VOLUME_NAME}_workdir"
@@ -90,6 +88,9 @@ _unload_default_exports() {
 if [[ "$(uname -s)" == "Linux" ]]; then
     WORKDIR_UID=$(id -u $USER)
     WORKDIR_GID=$(id -g $USER)
+else
+    WORKDIR_UID=1000
+    WORKDIR_GID=1000
 fi
 
 _load_default_exports
