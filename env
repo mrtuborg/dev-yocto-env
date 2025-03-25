@@ -55,6 +55,13 @@ _load_default_exports() {
     DL_PORT=9210
 
     TOASTER_WEBUI=9090
+    WORKDIR_UID=1000
+    WORKDIR_GID=1000
+    # Redefine WORKDIR_UID and WORKDIR_GID only if on a Linux machine
+    if [[ "$(uname -s)" == "Linux" ]]; then
+        WORKDIR_UID=$(id -u $USER)
+        WORKDIR_GID=$(id -g $USER)
+    fi
 
     echo "Environment: ${ENV_ARCH}"
     #echo "Workdir volume: ${VOLUME_NAME}_workdir"
@@ -99,6 +106,7 @@ _load_default_exports
 envsubst < ${SCRIPT_DIR}/docker-compose.template.yml > docker-compose.${ENV_ARCH}.yml
 
 echo POKY_IMAGE=${POKY_IMAGE}
+echo "build behaviour: ${vde_build_behaviour[@]}"
 
 docker volume create ${VOLUME_NAME}_workdir > /dev/null 2>&1
 docker compose -f ${PROJECT_TOP}/docker-compose.${ENV_ARCH}.yml \
