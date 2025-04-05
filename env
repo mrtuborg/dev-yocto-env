@@ -143,7 +143,7 @@ _poky_dock_cmd() {
         -w "${WORKSPACE_PATH}"
         "${vde_build_behaviour[@]}"
         vde # Start only the vde container
-        /bin/bash -c "${COMMAND_TO_RUN}"
+        /bin/bash -c "${COMMAND_TO_RUN}; exit $?"
     )
 
     docker compose -f ${PROJECT_TOP}/docker-compose.${ENV_ARCH}.yml \
