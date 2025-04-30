@@ -2,7 +2,7 @@ services:
   vde:
     build:
       dockerfile: Dockerfile_22.04
-      context: ./poky-vde
+      context: ./docker-yocto-env
       args:
         USER_ID: ${WORKDIR_UID}
         USER_GID: ${WORKDIR_GID}
