@@ -1,0 +1,107 @@
+FROM ubuntu:20.04
+
+RUN apt-get update
+RUN apt-get install -y sudo openssl apt-utils
+
+WORKDIR /workdir
+
+#setup locale
+ENV DEBIAN_FRONTEND=noninteractive
+ENV LANG=en_US.UTF-8
+ENV LANGUAGE=en_US:UTF-8
+ENV LC_ALL=en_US.UTF-8
+
+RUN apt-get install -y locales && \
+	dpkg-reconfigure locales --frontend noninteractive && \
+	locale-gen "en_US.UTF-8" && \
+	update-locale LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8
+
+# Define username and temporary uid and gid
+ENV USER=vari USER_ID=1000 USER_GID=1000
+
+# now creating user, change password to 'ubuntu'
+RUN groupadd --gid "${USER_GID}" "${USER}" && \
+    useradd \
+      --uid ${USER_ID} \
+      --gid ${USER_GID} \
+      --create-home \
+      --shell /bin/bash\
+      --password $(openssl passwd -1 ubuntu)\
+      ${USER}
+
+# Yocto
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    bash \
+    gawk \
+    wget \
+    git \
+    diffstat \
+    unzip \
+    texinfo \
+    build-essential \
+    chrpath \
+    socat \
+    cpio \
+    python3 \
+    python3-pip \
+    python3-pexpect \
+    xz-utils \
+    debianutils \
+    iputils-ping \
+    libsdl1.2-dev \
+    xterm \
+    autoconf \
+    libtool \
+    libglib2.0-dev \
+    libarchive-dev \
+    sed \
+    coreutils \
+    texi2html \
+    docbook-utils \
+    help2man \
+    make \
+    gcc \
+    g++ \
+    desktop-file-utils \
+    libgl1-mesa-dev \
+    libglu1-mesa-dev \
+    mercurial \
+    automake \
+    groff \
+    curl \
+    lzop \
+    asciidoc \
+    u-boot-tools \
+    dos2unix \
+    mtd-utils \
+    pv \
+    libncurses5 \
+    libncurses5-dev \
+    libncursesw5-dev \
+    libelf-dev \
+    zlib1g-dev \
+    bc \
+    rename \
+    iproute2 \
+    zstd \
+    liblz4-tool \
+    python-is-python3 \
+    screen \
+     && ( apt-get install -y gcc-multilib g++-multilib || echo "Warning: not installing gcc-multilib" )
+
+# Install development packages
+RUN apt-get update && \
+	apt-get install -y \
+	python3-cryptography \
+	python3-jsonschema \
+	python3-pyelftools \
+	python3-yaml \
+	swig \
+	gcc-arm-linux-gnueabihf \
+	gcc-aarch64-linux-gnu
+
+# make /bin/sh symlink to bash instead of dash:
+RUN echo "dash dash/sh boolean false" | debconf-set-selections
+RUN DEBIAN_FRONTEND=noninteractive dpkg-reconfigure dash
+

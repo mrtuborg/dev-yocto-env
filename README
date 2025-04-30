@@ -1,14 +1,1 @@
-## 1. Add as a submodule to your YOCTO project
-user/yocto_project% git submodule add git@server:docker-yocto-env
-
-## 2. Create symbolik link, i.e:
-user/yocto_project% ln -s ./docker-yocto-env/env ./env
-
-## 3 To start environment, source the env file:
-user/yocto_project% . ./env
-
-## 4. All artefacts created by the environment in your YOCTO project should be added to the .gitignore file
-
-DEPENDENCIES:
-build_container: see <var-host-docker-containers> repo
-
+README.md

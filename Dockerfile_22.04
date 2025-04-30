@@ -1,0 +1,155 @@
+FROM ubuntu:22.04
+
+ARG POKY_REPO=https://git.yoctoproject.org/git/poky
+ARG POKY_COMMIT_ID
+
+WORKDIR /workdir
+
+#setup locale
+ENV DEBIAN_FRONTEND=noninteractive
+
+ENV LANG=en_US.UTF-8
+ENV LANGUAGE=en_US:UTF-8
+ENV LC_ALL=en_US.UTF-8
+
+ARG USER_ID=1000
+ARG USER_GID=1000
+# Define username and temporary uid and gid
+ENV USER=vari USER_ID=${USER_ID} USER_GID=${USER_GID}
+
+
+# for creating user, change password
+# $(openssl passwd -1 plain_text_password)
+
+RUN apt-get update && \
+    apt-get install -y \
+        sudo \
+        openssl \
+        apt-utils \
+        locales && \
+    dpkg-reconfigure locales --frontend noninteractive && \
+    locale-gen "en_US.UTF-8" && \
+    update-locale LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8 && \
+    groupadd --gid "${USER_GID}" "${USER}" && \
+    useradd \
+      --uid ${USER_ID} \
+      --gid ${USER_GID} \
+      --create-home \
+      --shell /bin/bash\
+      --password '$1$m9SLief4$zqqWso081Hgb/91TGRiLW/'\
+      ${USER} && \
+    usermod -aG sudo ${USER}
+
+
+COPY scripts/primetoaster.sh \
+    scripts/toaster-launch.sh \
+    /usr/bin/
+
+
+# Yocto
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    bash \
+    gawk \
+    wget \
+    git \
+    diffstat \
+    unzip \
+    texinfo \
+    build-essential \
+    chrpath \
+    socat \
+    cpio \
+    python3 \
+    python3-pip \
+    python3-pexpect \
+    python3-venv \
+    xz-utils \
+    debianutils \
+    iputils-ping \
+    libsdl1.2-dev \
+    xterm \
+    autoconf \
+    libtool \
+    libglib2.0-dev \
+    libarchive-dev \
+    sed \
+    coreutils \
+    texi2html \
+    docbook-utils \
+    help2man \
+    make \
+    gcc \
+    g++ \
+    desktop-file-utils \
+    libgl1-mesa-dev \
+    libglu1-mesa-dev \
+    mercurial \
+    automake \
+    groff \
+    curl \
+    lzop \
+    asciidoc \
+    u-boot-tools \
+    dos2unix \
+    mtd-utils \
+    pv \
+    libncurses5 \
+    libncurses5-dev \
+    libncursesw5-dev \
+    libelf-dev \
+    zlib1g-dev \
+    bc \
+    rename \
+    iproute2 \
+    zstd \
+    lz4 \
+    liblz4-tool \
+    python-is-python3 \
+    screen \
+    ssh \
+    sysstat \
+    tmux \
+    file \
+    python3-git \
+    python3-jinja2 \
+    python3-cryptography \
+    python3-jsonschema \
+    python3-pyelftools \
+    python3-yaml \
+    swig \
+    gcc-arm-linux-gnueabihf \
+    gcc-aarch64-linux-gnu \
+    libgnutls28-dev \
+    u-boot-tools \
+    vim \
+    less \
+    && (apt-get install -y gcc-multilib g++-multilib || echo "Warning: not installing gcc-multilib")
+
+# Set up a python virtual environment
+ENV VIRTUAL_ENV=/opt/venv
+ENV PATH="$VIRTUAL_ENV/bin:$PATH"
+
+RUN mkdir ${VIRTUAL_ENV} && \
+    python3 -m venv ${VIRTUAL_ENV} && \
+    chmod -R 0777 ${VIRTUAL_ENV}
+
+USER vari
+WORKDIR /home/vari
+ENV LANG=en_US.UTF-8
+
+# Install the toaster requirements.
+RUN git clone ${POKY_REPO} --depth=1 /tmp/poky && \
+    cd /tmp/poky && \
+    git fetch --depth 1 origin ${POKY_COMMIT_ID} && \
+    git reset --hard ${POKY_COMMIT_ID}; \
+    ${VIRTUAL_ENV}/bin/activate && \
+    python3 -m pip install --upgrade pip && \
+    python3 -m pip install --no-cache-dir -r /tmp/poky/bitbake/toaster-requirements.txt
+
+USER root
+
+# make /bin/sh symlink to bash instead of dash:
+RUN echo "dash dash/sh boolean false" | debconf-set-selections && \
+    DEBIAN_FRONTEND=noninteractive dpkg-reconfigure dash
+
