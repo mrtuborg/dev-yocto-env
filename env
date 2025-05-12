@@ -109,6 +109,8 @@ echo POKY_IMAGE=${POKY_IMAGE}
 echo "build behaviour: ${vde_build_behaviour[@]}"
 
 docker volume create ${VOLUME_NAME}_workdir > /dev/null 2>&1
+
+# Jakub
 docker compose -f ${PROJECT_TOP}/docker-compose.${ENV_ARCH}.yml \
         run --rm "${vde_build_behaviour[@]}" vde
 
@@ -121,7 +123,7 @@ _poky_dock() {
         -u vari
         -it --rm
         -w "${WORKSPACE_PATH}"
-        "${vde_build_behaviour[@]}"
+        # "${vde_build_behaviour[@]}" Rebuild only on source envirnoment?
         vde # Start only the vde container
         /bin/bash -c "${COMMAND_TO_RUN}"
     )
@@ -140,14 +142,20 @@ _poky_dock_cmd() {
     local docker_args=(
         -u vari
         --rm
-        -w "${WORKSPACE_PATH}"
-        "${vde_build_behaviour[@]}"
-        vde # Start only the vde container
-        /bin/bash -c "${COMMAND_TO_RUN}; exit $?"
+        -v ${PROJECT_TOP}:${WORKSPACE_PATH}
+        -v ${VOLUME_NAME}_workdir:/workdir
+        -w ${WORKSPACE_PATH}
+        ${POKY_IMAGE}
+        /bin/bash -c "${COMMAND_TO_RUN}"
     )
 
-    docker compose -f ${PROJECT_TOP}/docker-compose.${ENV_ARCH}.yml \
-        run "${docker_args[@]}"
+    imagename=`docker compose -f docker-compose.x86_64.yml config --images | grep -w poky-vde`
+    echo "${imagename}"
+    echo "${PROJECT_TOP}"
+    echo "${VOLUME_NAME}"
+
+    docker run "${docker_args[@]}" 
+    return $?
 }
 
 info() {
@@ -219,6 +227,7 @@ poky() {
         run)
             if [ -n "${BUILD_DIR}" ]; then
                 _poky_dock_cmd linux/${ENV_ARCH} "source ${POKY_ENVIRONMENT} ${BUILD_DIR}; ${REMAINING_ARGS}" 
+                return $?
             else
                 _poky_dock_cmd linux/${ENV_ARCH} "${REMAINING_ARGS}"
             fi
