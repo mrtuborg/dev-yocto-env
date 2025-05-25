@@ -149,11 +149,7 @@ _poky_dock_cmd() {
         /bin/bash -c "${COMMAND_TO_RUN}"
     )
 
-    imagename=`docker compose -f docker-compose.x86_64.yml config --images | grep -w poky-vde`
-    echo "${imagename}"
-    echo "${PROJECT_TOP}"
-    echo "${VOLUME_NAME}"
-
+    # imagename=`docker compose -f docker-compose.x86_64.yml config --images | grep -w poky-vde`
     docker run "${docker_args[@]}" 
     return $?
 }
