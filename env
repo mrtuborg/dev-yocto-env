@@ -144,6 +144,7 @@ _poky_dock_cmd() {
         --rm
         -v ${PROJECT_TOP}:${WORKSPACE_PATH}
         -v ${VOLUME_NAME}_workdir:/workdir
+        -v /home/$USER/.ssh:/home/vari/.ssh
         -w ${WORKSPACE_PATH}
         ${POKY_IMAGE}
         /bin/bash -c "${COMMAND_TO_RUN}"
