@@ -26,11 +26,8 @@ ENV_ARCH=${1:-${ENV_ARCH:-$(uname -m)}}
 # PULL_VDE environment variable (build by default)
 if [[ "${PULL_VDE}" == "true" ]]; then
     echo "Pulling poky-vde image"
-    vde_build_behaviour=(--pull always)
 else
-    echo "Building poky-vde image"
-     # Use --build argument if you want to build the image forcefully each time
-    vde_build_behaviour=(--build)
+    echo "Building poky-vde image with host UID/GID"
 fi
 
 # Currently for the simplicity, we are using the VDE image for toaster
@@ -106,32 +103,58 @@ _load_default_exports
 envsubst < ${SCRIPT_DIR}/docker-compose.template.yml > docker-compose.${ENV_ARCH}.yml
 
 echo POKY_IMAGE=${POKY_IMAGE}
-echo "build behaviour: ${vde_build_behaviour[@]}"
 
 docker volume create ${VOLUME_NAME}_workdir > /dev/null 2>&1
 
-# Jakub
+# Check if we need to build the image
+if [[ "${PULL_VDE}" != "true" ]]; then
+    echo "Building image..."
+    docker build -t ${POKY_IMAGE} \
+        --build-arg POKY_REPO=https://github.com/yoctoproject/poky.git \
+        --build-arg POKY_COMMIT_ID=6505459809380ddcf152a09343e4dc55038de332 \
+        -f docker-yocto-env/Dockerfile_22.04 \
+        docker-yocto-env/
+fi
+
+# Jakub - run the container (without build args since image is already built)
 docker compose -f ${PROJECT_TOP}/docker-compose.${ENV_ARCH}.yml \
-        run --rm "${vde_build_behaviour[@]}" vde
+        run --rm vde
 
 _poky_dock() {
     echo "Poky dock in interactive mode"
     local BUILDPLATFORM="${1}"
     local COMMAND_TO_RUN="${2}"
 
+    # Detect if we're using Podman (which needs :Z for volume labeling on Linux, but not necessarily on macOS)
+    local VOLUME_FLAGS=""
+    if command -v podman >/dev/null 2>&1 && [[ "$(docker --version 2>/dev/null)" == *"podman"* ]]; then
+        # On macOS, Podman might not need :Z flag and it could cause issues
+        if [[ "$(uname -s)" == "Linux" ]]; then
+            VOLUME_FLAGS=":Z"
+            echo "Detected Podman on Linux - using SELinux volume labeling"
+        else
+            echo "Detected Podman on macOS - using standard volume mounts"
+        fi
+    fi
+
     local docker_args=(
         -u vari
         -it --rm
+        -v ${PROJECT_TOP}:${WORKSPACE_PATH}${VOLUME_FLAGS}
+        -v ${VOLUME_NAME}_workdir:/workdir${VOLUME_FLAGS}
+        -v /Users/$USER/.ssh:/home/vari/.ssh${VOLUME_FLAGS}
         -w "${WORKSPACE_PATH}"
-        # "${vde_build_behaviour[@]}" Rebuild only on source envirnoment?
-        vde # Start only the vde container
+        ${POKY_IMAGE}
         /bin/bash -c "${COMMAND_TO_RUN}"
     )
 
     mkdir -p ${PROJECT_TOP}/${POKY_TMP_DIR}
 
-    docker compose -f ${PROJECT_TOP}/docker-compose.${ENV_ARCH}.yml \
-        run "${docker_args[@]}"
+    echo "Running with UID:GID ${WORKDIR_UID}:${WORKDIR_GID}"
+    echo "Volume flags: ${VOLUME_FLAGS}"
+    
+    # Use docker run directly for interactive mode (works better with podman)
+    docker run "${docker_args[@]}"
 }
 
 _poky_dock_cmd() {
@@ -139,12 +162,18 @@ _poky_dock_cmd() {
     local BUILDPLATFORM="${1}"
     local COMMAND_TO_RUN="${2}"
 
+    # Detect if we're using Podman (which needs :Z for volume labeling)
+    local VOLUME_FLAGS=""
+    if command -v podman >/dev/null 2>&1 && [[ "$(docker --version 2>/dev/null)" == *"podman"* ]]; then
+        VOLUME_FLAGS=":Z"
+    fi
+
     local docker_args=(
         -u vari
         --rm
-        -v ${PROJECT_TOP}:${WORKSPACE_PATH}
-        -v ${VOLUME_NAME}_workdir:/workdir
-        -v /home/$USER/.ssh:/home/vari/.ssh
+        -v ${PROJECT_TOP}:${WORKSPACE_PATH}${VOLUME_FLAGS}
+        -v ${VOLUME_NAME}_workdir:/workdir${VOLUME_FLAGS}
+        -v /home/$USER/.ssh:/home/vari/.ssh${VOLUME_FLAGS}
         -w ${WORKSPACE_PATH}
         ${POKY_IMAGE}
         /bin/bash -c "${COMMAND_TO_RUN}"

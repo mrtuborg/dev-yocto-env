@@ -30,7 +30,12 @@ RUN apt-get update && \
     dpkg-reconfigure locales --frontend noninteractive && \
     locale-gen "en_US.UTF-8" && \
     update-locale LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8 && \
-    groupadd --gid "${USER_GID}" "${USER}" && \
+    if ! getent group ${USER_GID} > /dev/null 2>&1; then \
+        groupadd --gid "${USER_GID}" "${USER}"; \
+    else \
+        EXISTING_GROUP=$(getent group ${USER_GID} | cut -d: -f1); \
+        echo "Using existing group: ${EXISTING_GROUP} (GID ${USER_GID})"; \
+    fi && \
     useradd \
       --uid ${USER_ID} \
       --gid ${USER_GID} \
@@ -38,7 +43,9 @@ RUN apt-get update && \
       --shell /bin/bash\
       --password '$1$m9SLief4$zqqWso081Hgb/91TGRiLW/'\
       ${USER} && \
-    usermod -aG sudo ${USER}
+    usermod -aG sudo ${USER} && \
+    # Ensure the user can write to workspace directories
+    mkdir -p /workspace && chmod 777 /workspace
 
 
 COPY scripts/primetoaster.sh \
@@ -124,7 +131,13 @@ RUN apt-get update && \
     u-boot-tools \
     vim \
     less \
-    && (apt-get install -y gcc-multilib g++-multilib || echo "Warning: not installing gcc-multilib")
+    tzdata \
+    && (apt-get update && apt-get install -y libc6-dev-i386 || echo "Warning: not installing libc6-dev-i386") \
+    && (dpkg --print-architecture | grep -q amd64 && apt-get install -y gcc-multilib g++-multilib || echo "Warning: multilib not available for this architecture")
+
+# Configure timezone for Podman compatibility
+ENV TZ=Europe/Oslo
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
 # Set up a python virtual environment
 ENV VIRTUAL_ENV=/opt/venv

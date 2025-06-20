@@ -13,22 +13,19 @@ services:
     command: [
         "/bin/sh",
         "-c",
-        "if [ ! -f /workdir/.initialized ]; then \
-        echo 'Workdir starting initialization'; \
-        touch /workdir/.initialized && echo 'Workdir created' || echo 'Failed to create workdir'; \
-        chown -hR ${WORKDIR_UID}:${WORKDIR_GID} /workdir && echo 'Ownership changed' || echo 'Failed to change ownership'; \
-        else \
-        echo 'Workdir already initialized'; \
-        fi",
+        "echo 'Initializing workdir...'; \
+        mkdir -p /workdir 2>/dev/null || true; \
+        chmod 777 /workdir 2>/dev/null || true; \
+        touch /workdir/.initialized 2>/dev/null || echo 'Note: Could not create initialization marker (permissions)'; \
+        chown -hR ${WORKDIR_UID}:${WORKDIR_GID} /workdir 2>/dev/null || echo 'Note: Could not change ownership (permissions)'; \
+        echo 'Workdir initialization complete'",
       ]
     ports:
       - "${TOASTER_WEBUI}:8000"
     volumes:
       - ${PROJECT_TOP}:${WORKSPACE_PATH}
       - workdir:/workdir
-      - ${HOME}/.ssh:/home/vari/.ssh
-      - /etc/localtime:/etc/localtime:ro
-      - /etc/timezone:/etc/timezone:ro
+      - ${HOME}/.ssh:/home/vari/.ssh:ro
     # root user is using only for initialization
     user: root
     container_name: "${VOLUME_NAME}_vde"
@@ -57,9 +54,13 @@ services:
     ports:
       - ${DL_PORT}:80
     volumes:
+      - ./docker-yocto-env/conf/httpd-custom.conf:/usr/local/apache2/conf/httpd.conf:ro
+      - ./poky_tmp/rpm-host-logs:/usr/local/apache2/logs
       - workdir:/usr/local/apache2/htdocs/yocto
+    user: "${WORKDIR_UID}:${WORKDIR_GID}"
     depends_on:
       - vde
+
 
   netboot-server:
     image: ${NETBOOT_SERVER_IMAGE}
