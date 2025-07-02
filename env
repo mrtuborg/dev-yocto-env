@@ -179,8 +179,10 @@ _poky_dock_cmd() {
         /bin/bash -c "${COMMAND_TO_RUN}"
     )
 
-    # imagename=`docker compose -f docker-compose.x86_64.yml config --images | grep -w poky-vde`
-    docker run "${docker_args[@]}" 
+    mkdir -p ${PROJECT_TOP}/${POKY_TMP_DIR}
+
+    # Use docker run directly to ensure volume flags (like :Z for Podman) are properly applied
+    docker run "${docker_args[@]}"
     return $?
 }
 
@@ -403,4 +405,3 @@ echo " * rpm-host start [<PORT>]    - start rpm repo local hosting"
 echo " * rpm-host stop              - stop rpm repo local hosting"
 echo " * rpm-host status            - check the status of rpm repo local hosting"
 echo
-
