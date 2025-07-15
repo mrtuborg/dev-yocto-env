@@ -1,2 +1,5 @@
 .DS_Store
+docker-compose.arm64.yml
+docker-compose.amd64.yml
+docker-compose.x86_64.yml
 

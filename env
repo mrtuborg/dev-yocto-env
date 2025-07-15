@@ -99,33 +99,91 @@ fi
 
 _load_default_exports
 
-# Replace the environment variable in the template and generate docker-compose.yml
-envsubst < ${SCRIPT_DIR}/docker-compose.template.yml > docker-compose.${ENV_ARCH}.yml
+# Cache for expensive operations
+_COMPOSE_FILE_GENERATED=""
+_PROJECT_TOP_CACHED=""
 
-echo POKY_IMAGE=${POKY_IMAGE}
+# Generate docker-compose file only when needed (performance optimization)
+_generate_compose_file() {
+    local compose_file="docker-compose.${ENV_ARCH}.yml"
+    local template_file="${SCRIPT_DIR}/docker-compose.template.yml"
+    
+    # Check if template exists
+    if [[ ! -f "$template_file" ]]; then
+        echo "ERROR: Docker compose template not found: $template_file" >&2
+        return 1
+    fi
+    
+    # Only regenerate if template is newer or compose file doesn't exist
+    if [[ ! -f "$compose_file" ]] || [[ "$template_file" -nt "$compose_file" ]] || [[ "$_COMPOSE_FILE_GENERATED" != "$compose_file" ]]; then
+        echo "Generating docker-compose configuration..."
+        # Fix the context path to be absolute instead of relative
+        envsubst < "$template_file" | sed "s|context: ./docker-yocto-env|context: ${SCRIPT_DIR}|g" > "$compose_file" || {
+            echo "ERROR: Failed to generate docker-compose file" >&2
+            return 1
+        }
+        _COMPOSE_FILE_GENERATED="$compose_file"
+    fi
+    return 0
+}
 
-docker volume create ${VOLUME_NAME}_workdir > /dev/null 2>&1
+# Create docker volume only if it doesn't exist (performance optimization)
+_ensure_docker_volume() {
+    local volume_name="${VOLUME_NAME}_workdir"
+    if ! docker volume inspect "$volume_name" >/dev/null 2>&1; then
+        echo "Creating docker volume: $volume_name"
+        docker volume create "$volume_name" > /dev/null 2>&1 || {
+            echo "ERROR: Failed to create docker volume: $volume_name" >&2
+            return 1
+        }
+    fi
+    return 0
+}
 
-# Check if we need to build the image
-if [[ "${PULL_VDE}" != "true" ]]; then
-    echo "Building image..."
-    docker build -t ${POKY_IMAGE} \
-        --build-arg POKY_REPO=https://github.com/yoctoproject/poky.git \
-        --build-arg POKY_COMMIT_ID=6505459809380ddcf152a09343e4dc55038de332 \
-        -f docker-yocto-env/Dockerfile_22.04 \
-        docker-yocto-env/
-fi
+# Initialize environment (run once at startup)
+_initialize_environment() {
+    # Check if we need to build the image
+    if [[ "${PULL_VDE}" != "true" ]]; then
+        echo "Building image..."
+        docker build -t ${POKY_IMAGE} \
+            --build-arg POKY_REPO=https://github.com/yoctoproject/poky.git \
+            --build-arg POKY_COMMIT_ID=6505459809380ddcf152a09343e4dc55038de332 \
+            -f ${SCRIPT_DIR}/Dockerfile_22.04 \
+            ${SCRIPT_DIR}/
+    fi
+    
+    echo POKY_IMAGE=${POKY_IMAGE}
+    echo "build behaviour: ${vde_build_behaviour[@]}"
+    
+    # Generate initial compose file and create volume
+    _generate_compose_file || return 1
+    _ensure_docker_volume || return 1
+    
+    # Initial container setup
+    docker compose -f "${PROJECT_TOP}/docker-compose.${ENV_ARCH}.yml" \
+        run --rm "${vde_build_behaviour[@]}" vde
+}
 
-# Jakub - run the container (without build args since image is already built)
-docker compose -f ${PROJECT_TOP}/docker-compose.${ENV_ARCH}.yml \
-        run --rm vde
+# Common docker execution function
+_run_docker() {
+    local interactive="$1"
+    local buildplatform="$2"
+    local command_to_run="$3"
+    
+    # Validate inputs
+    if [[ -z "$command_to_run" ]]; then
+        echo "ERROR: No command specified for docker execution" >&2
+        return 1
+    fi
+    
+    # Display mode
+    if [[ "$interactive" == "true" ]]; then
+        echo "Poky dock in interactive mode"
+    else
+        echo "Poky dock in non-interactive mode"
+    fi
 
-_poky_dock() {
-    echo "Poky dock in interactive mode"
-    local BUILDPLATFORM="${1}"
-    local COMMAND_TO_RUN="${2}"
-
-    # Detect if we're using Podman (which needs :Z for volume labeling on Linux, but not necessarily on macOS)
+    # Detect if we're using Podman (with proper OS-specific volume labeling)
     local VOLUME_FLAGS=""
     if command -v podman >/dev/null 2>&1 && [[ "$(docker --version 2>/dev/null)" == *"podman"* ]]; then
         # On macOS, Podman might not need :Z flag and it could cause issues
@@ -137,53 +195,56 @@ _poky_dock() {
         fi
     fi
 
-    local docker_args=(
-        -u vari
-        -it --rm
-        -v ${PROJECT_TOP}:${WORKSPACE_PATH}${VOLUME_FLAGS}
-        -v ${VOLUME_NAME}_workdir:/workdir${VOLUME_FLAGS}
-        -v /Users/$USER/.ssh:/home/vari/.ssh${VOLUME_FLAGS}
-        -w "${WORKSPACE_PATH}"
-        ${POKY_IMAGE}
-        /bin/bash -c "${COMMAND_TO_RUN}"
-    )
-
-    mkdir -p ${PROJECT_TOP}/${POKY_TMP_DIR}
-
-    echo "Running with UID:GID ${WORKDIR_UID}:${WORKDIR_GID}"
-    echo "Volume flags: ${VOLUME_FLAGS}"
-    
-    # Use docker run directly for interactive mode (works better with podman)
-    docker run "${docker_args[@]}"
-}
-
-_poky_dock_cmd() {
-    echo "Poky dock in non-interactive mode"
-    local BUILDPLATFORM="${1}"
-    local COMMAND_TO_RUN="${2}"
-
-    # Detect if we're using Podman (which needs :Z for volume labeling)
-    local VOLUME_FLAGS=""
-    if command -v podman >/dev/null 2>&1 && [[ "$(docker --version 2>/dev/null)" == *"podman"* ]]; then
-        VOLUME_FLAGS=":Z"
+    # Determine SSH path based on OS
+    local SSH_PATH
+    if [[ "$(uname -s)" == "Linux" ]]; then
+        SSH_PATH="/home/$USER/.ssh"
+    else
+        SSH_PATH="/Users/$USER/.ssh"
     fi
 
+    # Prepare docker arguments
     local docker_args=(
         -u vari
         --rm
-        -v ${PROJECT_TOP}:${WORKSPACE_PATH}${VOLUME_FLAGS}
-        -v ${VOLUME_NAME}_workdir:/workdir${VOLUME_FLAGS}
-        -v /home/$USER/.ssh:/home/vari/.ssh${VOLUME_FLAGS}
-        -w ${WORKSPACE_PATH}
-        ${POKY_IMAGE}
-        /bin/bash -c "${COMMAND_TO_RUN}"
+        -v "${PROJECT_TOP}:${WORKSPACE_PATH}${VOLUME_FLAGS}"
+        -v "${VOLUME_NAME}_workdir:/workdir${VOLUME_FLAGS}"
+        -v "${SSH_PATH}:/home/vari/.ssh${VOLUME_FLAGS}"
+        -w "${WORKSPACE_PATH}"
     )
+    
+    # Add interactive flag if needed
+    if [[ "$interactive" == "true" ]]; then
+        docker_args+=(-it)
+    fi
+    
+    # Add image and command
+    docker_args+=("${POKY_IMAGE}" /bin/bash -c "${command_to_run}")
 
-    mkdir -p ${PROJECT_TOP}/${POKY_TMP_DIR}
+    # Create temp directory
+    mkdir -p "${PROJECT_TOP}/${POKY_TMP_DIR}" || {
+        echo "ERROR: Failed to create temp directory" >&2
+        return 1
+    }
 
-    # Use docker run directly to ensure volume flags (like :Z for Podman) are properly applied
+    # Show debug info for interactive mode
+    if [[ "$interactive" == "true" ]]; then
+        echo "Running with UID:GID ${WORKDIR_UID}:${WORKDIR_GID}"
+        echo "Volume flags: ${VOLUME_FLAGS}"
+    fi
+    
+    # Execute docker run directly (works better with volume flags than docker compose)
     docker run "${docker_args[@]}"
     return $?
+}
+
+# Simplified wrapper functions
+_poky_dock() {
+    _run_docker true "$1" "$2"
+}
+
+_poky_dock_cmd() {
+    _run_docker  false "$1" "$2"
 }
 
 info() {
@@ -241,8 +302,8 @@ poky() {
     fi
 
     echo POKY_IMAGE=${POKY_IMAGE}
-    # Replace the environment variable in the template and generate docker-compose.yml
-    envsubst < ${SCRIPT_DIR}/docker-compose.template.yml > docker-compose.${ENV_ARCH}.yml
+    # Use cached compose file generation
+    _generate_compose_file || return 1
 
     case ${COMMAND_TO_RUN} in
         shell)
@@ -267,9 +328,9 @@ poky() {
             fi
 
             local PORT="${REMAINING_ARGS:-${TOASTER_WEBUI}}"
-            export TOASTER_WEBUI="${PORT}" # Set the environment variable for filebrowser port
-            # Replace the environment variable in the template and generate docker-compose.yml
-            envsubst < ${SCRIPT_DIR}/docker-compose.template.yml > docker-compose.${ENV_ARCH}.yml
+            export TOASTER_WEBUI="${PORT}" # Set the environment variable for toaster port
+            # Use cached compose file generation
+            _generate_compose_file || return 1
 
             _poky_dock linux/${ENV_ARCH} \
                     "export HISTFILE=${SHELL_HISTFILE}; \
@@ -320,8 +381,8 @@ filebrowser() {
     case ${COMMAND} in
         start)
             export FILEBROWSER_PORT="${PORT}" # Set the environment variable for filebrowser port
-            # Replace the environment variable in the template and generate docker-compose.yml
-            envsubst < ${SCRIPT_DIR}/docker-compose.template.yml > docker-compose.${ENV_ARCH}.yml
+            # Use cached compose file generation
+            _generate_compose_file || return 1
 
             docker compose -f ${PROJECT_TOP}/docker-compose.${ENV_ARCH}.yml \
                 -p "${VOLUME_NAME}" \
@@ -355,8 +416,8 @@ rpm-host() {
     case ${COMMAND} in
         start)
             export DL_PORT="${PORT}" # Set the environment variable for filebrowser port
-            # Replace the environment variable in the template and generate docker-compose.yml
-            envsubst < ${SCRIPT_DIR}/docker-compose.template.yml > docker-compose.${ENV_ARCH}.yml
+            # Use cached compose file generation
+            _generate_compose_file || return 1
 
             docker compose -f ${PROJECT_TOP}/docker-compose.${ENV_ARCH}.yml \
                 -p "${VOLUME_NAME}" \
