@@ -60,6 +60,11 @@ _load_default_exports() {
         WORKDIR_GID=$(id -g $USER)
     fi
 
+    # Directory exclusion variables for info commands
+    # Set default exclusions - can be overridden by user
+    MACHINES_EXCLUDE_DIRS=${MACHINES_EXCLUDE_DIRS:-"sources"}
+    IMAGES_EXCLUDE_DIRS=${IMAGES_EXCLUDE_DIRS:-"sources"}
+
     echo "Environment: ${ENV_ARCH}"
     #echo "Workdir volume: ${VOLUME_NAME}_workdir"
 
@@ -76,6 +81,8 @@ _load_default_exports() {
     export VOLUME_NAME
     export TOASTER_WEBUI
     export DL_PORT
+    export MACHINES_EXCLUDE_DIRS
+    export IMAGES_EXCLUDE_DIRS
 }
 
 _unload_default_exports() {
@@ -252,12 +259,52 @@ info() {
 
     case $1 in
         machines)
-            find . -type f -path '*/machine/*.conf' -exec basename {} .conf \; | \
+            # Build find exclusion arguments for machines
+            local find_args=()
+            if [ -n "$MACHINES_EXCLUDE_DIRS" ]; then
+                # Use a more compatible approach for splitting the string
+                local exclude_dirs_list="$MACHINES_EXCLUDE_DIRS"
+                while [ -n "$exclude_dirs_list" ]; do
+                    # Extract first directory
+                    local exclude_dir="${exclude_dirs_list%% *}"
+                    find_args+=(-path "./$exclude_dir" -prune -o)
+                    # Remove processed directory from list
+                    if [ "$exclude_dir" = "$exclude_dirs_list" ]; then
+                        # Only one directory left
+                        break
+                    else
+                        exclude_dirs_list="${exclude_dirs_list#* }"
+                    fi
+                done
+            fi
+            find_args+=(-type f -path '*/machine/*.conf' -print)
+            
+            find . "${find_args[@]}" | sed 's|.*/||; s|\.conf$||' | \
                 { [ -n "${print_filter}" ] && grep "${print_filter}" || cat; } | sort | \
                 xargs -I {} echo -n "{}, " | sed 's/, $/\n/'
             ;;
         images)
-            find . -type f -path '*/images/*.bb' -exec basename {} .bb \; | \
+            # Build find exclusion arguments for images
+            local find_args=()
+            if [ -n "$IMAGES_EXCLUDE_DIRS" ]; then
+                # Use a more compatible approach for splitting the string
+                local exclude_dirs_list="$IMAGES_EXCLUDE_DIRS"
+                while [ -n "$exclude_dirs_list" ]; do
+                    # Extract first directory
+                    local exclude_dir="${exclude_dirs_list%% *}"
+                    find_args+=(-path "./$exclude_dir" -prune -o)
+                    # Remove processed directory from list
+                    if [ "$exclude_dir" = "$exclude_dirs_list" ]; then
+                        # Only one directory left
+                        break
+                    else
+                        exclude_dirs_list="${exclude_dirs_list#* }"
+                    fi
+                done
+            fi
+            find_args+=(-type f -path '*/images/*.bb' -print)
+            
+            find . "${find_args[@]}" | sed 's|.*/||; s|\.bb$||' | \
                 { [ -n "${print_filter}" ] && grep "${print_filter}" || cat; } | sort | \
                 xargs -I {} echo -n "{}, " | sed 's/, $/\n/'
             ;;
@@ -441,6 +488,659 @@ rpm-host() {
     _unload_default_exports
 }
 
+cleanup() {
+    local COMMAND="$1"
+    local WORKDIR_MOUNT="/workdir"
+    
+    _load_default_exports
+    
+    case ${COMMAND} in
+        analysis|"")
+            echo "=== Workdir Cleanup Analysis ==="
+            
+            # Get list of machines that exist in the project configuration
+            echo "🔍 Getting project machines..."
+            local project_machines=$(info machines | tr ',' '\n' | sed 's/^ *//;s/ *$//' | grep -v '^$')
+            if [ -z "$project_machines" ]; then
+                echo "❌ No machines found in project configuration"
+                _unload_default_exports
+                return 0
+            fi
+            
+            echo "📋 Project machines: $(echo "$project_machines" | tr '\n' ',' | sed 's/,$//')"
+            echo
+            
+            # Convert to space-separated format for easier passing to Docker
+            local project_machines_list=$(echo "$project_machines" | tr '\n' ' ')
+            
+            local volumes=$(docker volume ls --format "{{.Name}}" | grep -E "^${PROJECT_NAME}-.*_workdir$" | sort)
+            
+            if [ -z "$volumes" ]; then
+                echo "No workdir volumes found for project: ${PROJECT_NAME}"
+                _unload_default_exports
+                return 0
+            fi
+            
+            local total_size=0
+            local temp_file=$(mktemp)
+            local built_machines_file=$(mktemp)
+            
+            echo "$volumes" | while IFS= read -r volume; do
+                [ -z "$volume" ] && continue
+                local arch=$(echo "$volume" | sed "s/^${PROJECT_NAME}-\(.*\)_workdir$/\1/")
+                echo "📊 Analyzing: $volume (Architecture: $arch)"
+                
+                echo "  🔍 Starting Docker container analysis..."
+                
+                # First, let's check what's actually in the volume quickly
+                echo "  📂 Quick volume inspection..."
+                
+                # Check if volume has content before doing expensive operations
+                local has_content=$(docker run --rm -v "$volume:$WORKDIR_MOUNT" alpine:latest sh -c "
+                    cd $WORKDIR_MOUNT 2>/dev/null || exit 1
+                    ls -A . 2>/dev/null | wc -l
+                " 2>/dev/null || echo "0")
+                
+                if [ "$has_content" -eq 0 ]; then
+                    echo "  📁 Volume is empty"
+                    local volume_info="TOTAL:0"
+                else
+                    echo "  📁 Volume has $has_content items - starting detailed analysis..."
+                    
+                    # Simple and fast analysis with timeout protection
+                    echo "  [1/3] 📁 Quick directory scan..."
+                    
+                    # First, let's see what's actually there
+                    echo "    📂 Analyzing tmp directory..."
+                    
+                    # Only scan directories that contain machine-specific content or are significant
+                    local relevant_dirs="work deploy stamps"
+                    local tmp_dirs=$(docker run --rm -v "$volume:$WORKDIR_MOUNT" alpine:latest sh -c "
+                        [ -d $WORKDIR_MOUNT/tmp ] || exit 1
+                        for dir in $relevant_dirs; do
+                            [ -d $WORKDIR_MOUNT/tmp/\$dir ] && echo \$dir
+                        done
+                    " 2>/dev/null)
+                    
+                    if [ -z "$tmp_dirs" ]; then
+                        echo "      📁 No relevant tmp directories found (work, deploy)"
+                        local tmp_size=0
+                    else
+                        echo "      📁 Scanning relevant tmp subdirectories (work, deploy)..."
+                        local tmp_size=0
+                        
+                        # Process each relevant directory individually with host-side progress
+                        local total_cleanable_mb=0
+                        echo "$tmp_dirs" | while IFS= read -r dirname; do
+                            [ -z "$dirname" ] && continue
+                            # Analyze machine-specific content for work and deploy directories first
+                            echo "        🔍 Analyzing machine-specific content in \"${dirname}\" directory..."
+                            local machine_breakdown=$(docker run --rm -v "$volume:$WORKDIR_MOUNT" -e "PROJECT_MACHINES=$project_machines_list" alpine:latest sh -c "
+                                        if [ '$dirname' = 'work' ]; then
+                                            # For work directory, look for actual machine directories
+                                            # Yocto work structure: tmp/work/ARCH-DISTRO-LINUX/PACKAGE/VERSION-rX/
+                                            # We want to extract the machine from the ARCH part
+                                            declare -A machine_sizes
+                                            find $WORKDIR_MOUNT/tmp/work -maxdepth 1 -type d 2>/dev/null | while read arch_dir; do
+                                                [ \"\$arch_dir\" = '$WORKDIR_MOUNT/tmp/work' ] && continue
+                                                arch_part=\$(basename \"\$arch_dir\")
+                                                # Extract machine from architecture - try multiple patterns to match project machine names
+                                                # Pattern 1: Standard Yocto format (e.g., cortexa53-imx8mp-roomboard-poky-linux -> imx8mp-roomboard)
+                                                machine=\$(echo \"\$arch_part\" | sed 's/.*-\\([^-]*-[^-]*\\)-poky-linux/\\1/' | sed 's/.*-\\([^-]*-[^-]*\\)-fslc-linux/\\1/')
+                                                # Pattern 2: If that failed, try single machine name (e.g., cortexa53-imx8mp-poky-linux -> imx8mp)
+                                                [ \"\$machine\" = \"\$arch_part\" ] && {
+                                                    machine=\$(echo \"\$arch_part\" | sed 's/.*-\\([^-]*\\)-poky-linux/\\1/' | sed 's/.*-\\([^-]*\\)-fslc-linux/\\1/')
+                                                }
+                                                # Pattern 3: If still failed, try to find known machine patterns
+                                                [ \"\$machine\" = \"\$arch_part\" ] && {
+                                                    machine=\$(echo \"\$arch_part\" | grep -o 'imx[0-9][a-z]*[^-]*' || echo \"\$arch_part\" | grep -o 'roommate[^-]*' || echo 'unknown')
+                                                }
+                                                [ \"\$machine\" != 'unknown' ] && [ \"\$machine\" != '' ] && {
+                                                    size=\$(timeout 15 du -sb \"\$arch_dir\" 2>/dev/null | cut -f1 || echo '0')
+                                                    [ \"\$size\" != '0' ] && {
+                                                        size_mb=\$((size / 1024 / 1024))
+                                                        # Convert underscores to hyphens for matching (Yocto converts hyphens to underscores in directory names)
+                                                        machine_normalized=\$(echo \"\$machine\" | sed 's/_/-/g')
+                                                        # Check if this machine exists in project configuration
+                                                        if echo \"\$PROJECT_MACHINES\" | grep -q \"\$machine_normalized\"; then
+                                                            echo \"MACHINE:\$machine_normalized:\$size_mb:CLEANABLE\"
+                                                        else
+                                                            echo \"MACHINE:\$machine:\$size_mb:NOT_IN_PROJECT\"
+                                                        fi
+                                                    }
+                                                }
+                                            done
+                                        elif [ '$dirname' = 'deploy' ]; then
+                                            # For deploy directory, look in images subdirectory
+                                            [ -d $WORKDIR_MOUNT/tmp/deploy/images ] && {
+                                                for machine_dir in $WORKDIR_MOUNT/tmp/deploy/images/*; do
+                                                    [ -d \"\$machine_dir\" ] || continue
+                                                    machine=\$(basename \"\$machine_dir\")
+                                                    size=\$(timeout 10 du -sb \"\$machine_dir\" 2>/dev/null | cut -f1 || echo '0')
+                                                    [ \"\$size\" != '0' ] && {
+                                                        size_mb=\$((size / 1024 / 1024))
+                                                        # Convert underscores to hyphens for matching (Yocto converts hyphens to underscores in directory names)
+                                                        machine_normalized=\$(echo \"\$machine\" | sed 's/_/-/g')
+                                                        # Check if this machine exists in project configuration
+                                                        if echo \"\$PROJECT_MACHINES\" | grep -q \"\$machine_normalized\"; then
+                                                            echo \"MACHINE:\$machine_normalized:\$size_mb:CLEANABLE\"
+                                                        else
+                                                            echo \"MACHINE:\$machine:\$size_mb:NOT_IN_PROJECT\"
+                                                        fi
+                                                    }
+                                                done
+                                            }
+                                            # Also check for machine-specific package repositories
+                                            for pkg_type in rpm ipk deb; do
+                                                [ -d $WORKDIR_MOUNT/tmp/deploy/\$pkg_type ] && {
+                                                    for machine_dir in $WORKDIR_MOUNT/tmp/deploy/\$pkg_type/*; do
+                                                        [ -d \"\$machine_dir\" ] || continue
+                                                        machine=\$(basename \"\$machine_dir\")
+                                                        size=\$(timeout 10 du -sb \"\$machine_dir\" 2>/dev/null | cut -f1 || echo '0')
+                                                        [ \"\$size\" != '0' ] && {
+                                                            size_mb=\$((size / 1024 / 1024))
+                                                            machine_normalized=\$(echo \"\$machine\" | sed 's/_/-/g')
+                                                            if echo \"\$PROJECT_MACHINES\" | grep -q \"\$machine_normalized\"; then
+                                                                echo \"MACHINE:\$machine_normalized:\$size_mb:CLEANABLE\"
+                                                            else
+                                                                echo \"MACHINE:\$machine:\$size_mb:NOT_IN_PROJECT\"
+                                                            fi
+                                                        }
+                                                    done
+                                                }
+                                            done
+                                        elif [ '$dirname' = 'stamps' ]; then
+                                            # For stamps directory, look for ARCH-MACHINE-DISTRO directories
+                                            find $WORKDIR_MOUNT/tmp/stamps -maxdepth 1 -type d 2>/dev/null | while read arch_dir; do
+                                                [ \"\$arch_dir\" = '$WORKDIR_MOUNT/tmp/stamps' ] && continue
+                                                arch_part=\$(basename \"\$arch_dir\")
+                                                # Extract machine from architecture - same patterns as work directory
+                                                machine=\$(echo \"\$arch_part\" | sed 's/.*-\\([^-]*-[^-]*\\)-poky-linux/\\1/' | sed 's/.*-\\([^-]*-[^-]*\\)-fslc-linux/\\1/')
+                                                [ \"\$machine\" = \"\$arch_part\" ] && {
+                                                    machine=\$(echo \"\$arch_part\" | sed 's/.*-\\([^-]*\\)-poky-linux/\\1/' | sed 's/.*-\\([^-]*\\)-fslc-linux/\\1/')
+                                                }
+                                                [ \"\$machine\" = \"\$arch_part\" ] && {
+                                                    machine=\$(echo \"\$arch_part\" | grep -o 'imx[0-9][a-z]*[^-]*' || echo \"\$arch_part\" | grep -o 'roommate[^-]*' || echo 'unknown')
+                                                }
+                                                [ \"\$machine\" != 'unknown' ] && [ \"\$machine\" != '' ] && {
+                                                    size=\$(timeout 10 du -sb \"\$arch_dir\" 2>/dev/null | cut -f1 || echo '0')
+                                                    [ \"\$size\" != '0' ] && {
+                                                        size_mb=\$((size / 1024 / 1024))
+                                                        machine_normalized=\$(echo \"\$machine\" | sed 's/_/-/g')
+                                                        if echo \"\$PROJECT_MACHINES\" | grep -q \"\$machine_normalized\"; then
+                                                            echo \"MACHINE:\$machine_normalized:\$size_mb:CLEANABLE\"
+                                                        else
+                                                            echo \"MACHINE:\$machine:\$size_mb:NOT_IN_PROJECT\"
+                                                        fi
+                                                    }
+                                                }
+                                            done
+                                        fi
+                                    " 2>/dev/null)
+                                    
+                                    if [ -n "$machine_breakdown" ]; then
+                                        # Group by machine and sum sizes, preserving status
+                                        local cleanable_size=0
+                                        echo "$machine_breakdown" | awk -F: '
+                                        {
+                                            machine = $2
+                                            size = $3
+                                            machine_status = $4
+                                            machine_total[machine] += size
+                                            machine_state[machine] = machine_status
+                                        }
+                                        END {
+                                            for (machine in machine_total) {
+                                                print "MACHINE:" machine ":" machine_total[machine] ":" machine_state[machine]
+                                            }
+                                        }' | while IFS= read -r line; do
+                                            [ -z "$line" ] && continue
+                                            machine=$(echo "$line" | cut -d: -f2)
+                                            size_mb=$(echo "$line" | cut -d: -f3)
+                                            machine_state=$(echo "$line" | cut -d: -f4)
+                                            
+                                            # Show status based on project configuration match
+                                            if [ "$machine_state" = "CLEANABLE" ]; then
+                                                echo "            🖥️  $machine: ${size_mb}MB (cleanable - matches project)"
+                                                cleanable_size=$((cleanable_size + size_mb))
+                                            else
+                                                if [ ${size_mb} -gt 0 ]; then
+                                                    echo "            ❌ $machine: ${size_mb}MB (not in project config)"
+                                                fi
+                                            fi
+                                        done
+                                        
+                                        # Calculate cleanable size for this directory and add to total
+                                        local dir_cleanable_mb=$(echo "$machine_breakdown" | awk -F: '
+                                        {
+                                            machine = $2
+                                            size = $3
+                                            machine_status = $4
+                                            machine_total[machine] += size
+                                            machine_state[machine] = machine_status
+                                        }
+                                        END {
+                                            total_cleanable = 0
+                                            for (machine in machine_total) {
+                                                if (machine_state[machine] == "CLEANABLE") {
+                                                    total_cleanable += machine_total[machine]
+                                                }
+                                            }
+                                            print total_cleanable
+                                        }')
+                                        
+                                        # Show directory total as sum of cleanable machines
+                                        echo "        - $dirname: ${dir_cleanable_mb}MB (cleanable machines only)"
+                                        total_cleanable_mb=$((total_cleanable_mb + dir_cleanable_mb))
+                                    else
+                                        echo "        - $dirname: 0MB (no machines found)"
+                                    fi
+                        done
+                        
+                        # Calculate total cleanable tmp size in one Docker call
+                        tmp_size=$(docker run --rm -v "$volume:$WORKDIR_MOUNT" -e "PROJECT_MACHINES=$project_machines_list" alpine:latest sh -c "
+                            # Use a temp file to accumulate sizes since shell variables don't persist across subshells
+                            temp_total=/tmp/total_size
+                            echo '0' > \$temp_total
+                            
+                            # Process work directory - both machine-specific and machine-influenced directories
+                            if [ -d $WORKDIR_MOUNT/tmp/work ]; then
+                                find $WORKDIR_MOUNT/tmp/work -maxdepth 1 -type d 2>/dev/null | while read arch_dir; do
+                                    [ \"\$arch_dir\" = '$WORKDIR_MOUNT/tmp/work' ] && continue
+                                    arch_part=\$(basename \"\$arch_dir\")
+                                    
+                                    # Check if this is a machine-specific directory (contains machine name)
+                                    machine=\$(echo \"\$arch_part\" | sed 's/.*-\\([^-]*-[^-]*\\)-poky-linux/\\1/' | sed 's/.*-\\([^-]*-[^-]*\\)-fslc-linux/\\1/')
+                                    [ \"\$machine\" = \"\$arch_part\" ] && {
+                                        machine=\$(echo \"\$arch_part\" | sed 's/.*-\\([^-]*\\)-poky-linux/\\1/' | sed 's/.*-\\([^-]*\\)-fslc-linux/\\1/')
+                                    }
+                                    [ \"\$machine\" = \"\$arch_part\" ] && {
+                                        machine=\$(echo \"\$arch_part\" | grep -o 'imx[0-9][a-z]*[^-]*' || echo \"\$arch_part\" | grep -o 'roommate[^-]*' || echo 'unknown')
+                                    }
+                                    
+                                    # If we found a machine name, check if it's in project
+                                    if [ \"\$machine\" != 'unknown' ] && [ \"\$machine\" != '' ]; then
+                                        machine_normalized=\$(echo \"\$machine\" | sed 's/_/-/g')
+                                        if echo \"\$PROJECT_MACHINES\" | grep -q \"\$machine_normalized\"; then
+                                            size=\$(du -sb \"\$arch_dir\" 2>/dev/null | cut -f1 || echo '0')
+                                            current_total=\$(cat \$temp_total)
+                                            echo \$((current_total + size)) > \$temp_total
+                                        fi
+                                    else
+                                        # Check for machine-influenced directories (cross-compilation toolchain, etc.)
+                                        # These don't contain machine name but are created when building for specific machines
+                                        case \"\$arch_part\" in
+                                            x86_64-linux|*-nativesdk|allarch-*|*-cross-*|*-crosssdk-*)
+                                                # These are toolchain/cross-compilation directories that get created for machine builds
+                                                # Only count them if we have any project machines (indicating active builds)
+                                                if [ -n \"\$PROJECT_MACHINES\" ]; then
+                                                    size=\$(du -sb \"\$arch_dir\" 2>/dev/null | cut -f1 || echo '0')
+                                                    current_total=\$(cat \$temp_total)
+                                                    echo \$((current_total + size)) > \$temp_total
+                                                fi
+                                                ;;
+                                        esac
+                                    fi
+                                done
+                            fi
+                            
+                            # Process deploy directory
+                            if [ -d $WORKDIR_MOUNT/tmp/deploy/images ]; then
+                                for machine_dir in $WORKDIR_MOUNT/tmp/deploy/images/*; do
+                                    [ -d \"\$machine_dir\" ] || continue
+                                    machine=\$(basename \"\$machine_dir\")
+                                    machine_normalized=\$(echo \"\$machine\" | sed 's/_/-/g')
+                                    if echo \"\$PROJECT_MACHINES\" | grep -q \"\$machine_normalized\"; then
+                                        size=\$(du -sb \"\$machine_dir\" 2>/dev/null | cut -f1 || echo '0')
+                                        current_total=\$(cat \$temp_total)
+                                        echo \$((current_total + size)) > \$temp_total
+                                    fi
+                                done
+                            fi
+                            
+                            # Process deploy package repositories (rpm, ipk, deb)
+                            for pkg_type in rpm ipk deb; do
+                                if [ -d $WORKDIR_MOUNT/tmp/deploy/\$pkg_type ]; then
+                                    for machine_dir in $WORKDIR_MOUNT/tmp/deploy/\$pkg_type/*; do
+                                        [ -d \"\$machine_dir\" ] || continue
+                                        machine=\$(basename \"\$machine_dir\")
+                                        machine_normalized=\$(echo \"\$machine\" | sed 's/_/-/g')
+                                        if echo \"\$PROJECT_MACHINES\" | grep -q \"\$machine_normalized\"; then
+                                            size=\$(du -sb \"\$machine_dir\" 2>/dev/null | cut -f1 || echo '0')
+                                            current_total=\$(cat \$temp_total)
+                                            echo \$((current_total + size)) > \$temp_total
+                                        fi
+                                    done
+                                fi
+                            done
+                            
+                            # Process stamps directory
+                            if [ -d $WORKDIR_MOUNT/tmp/stamps ]; then
+                                find $WORKDIR_MOUNT/tmp/stamps -maxdepth 1 -type d 2>/dev/null | while read arch_dir; do
+                                    [ \"\$arch_dir\" = '$WORKDIR_MOUNT/tmp/stamps' ] && continue
+                                    arch_part=\$(basename \"\$arch_dir\")
+                                    # Extract machine from architecture - same patterns as work directory
+                                    machine=\$(echo \"\$arch_part\" | sed 's/.*-\\([^-]*-[^-]*\\)-poky-linux/\\1/' | sed 's/.*-\\([^-]*-[^-]*\\)-fslc-linux/\\1/')
+                                    [ \"\$machine\" = \"\$arch_part\" ] && {
+                                        machine=\$(echo \"\$arch_part\" | sed 's/.*-\\([^-]*\\)-poky-linux/\\1/' | sed 's/.*-\\([^-]*\\)-fslc-linux/\\1/')
+                                    }
+                                    [ \"\$machine\" = \"\$arch_part\" ] && {
+                                        machine=\$(echo \"\$arch_part\" | grep -o 'imx[0-9][a-z]*[^-]*' || echo \"\$arch_part\" | grep -o 'roommate[^-]*' || echo 'unknown')
+                                    }
+                                    [ \"\$machine\" != 'unknown' ] && [ \"\$machine\" != '' ] && {
+                                        machine_normalized=\$(echo \"\$machine\" | sed 's/_/-/g')
+                                        if echo \"\$PROJECT_MACHINES\" | grep -q \"\$machine_normalized\"; then
+                                            size=\$(du -sb \"\$arch_dir\" 2>/dev/null | cut -f1 || echo '0')
+                                            current_total=\$(cat \$temp_total)
+                                            echo \$((current_total + size)) > \$temp_total
+                                        fi
+                                    }
+                                done
+                            fi
+                            
+                            cat \$temp_total
+                        " 2>/dev/null || echo "0")
+                    fi
+                    
+                    echo "      Tmp total: $((tmp_size / 1024 / 1024 / 1024))GB"
+                    
+                    echo "  [2/3] 🖥️  Checking for machines..."
+                    local machines_info=$(timeout 15 docker run --rm -v "$volume:$WORKDIR_MOUNT" -e "PROJECT_MACHINES=$project_machines_list" alpine:latest sh -c "
+                        cd $WORKDIR_MOUNT 2>/dev/null || exit 1
+                        # Check direct tmp/deploy/images structure
+                        if [ -d tmp/deploy/images ]; then
+                            for machine_dir in tmp/deploy/images/*; do
+                                [ -d \"\$machine_dir\" ] || continue
+                                machine=\$(basename \"\$machine_dir\")
+                                size=\$(du -sb \"\$machine_dir\" 2>/dev/null | cut -f1 || echo '0')
+                                # Convert underscores to hyphens for matching (Yocto converts hyphens to underscores in directory names)
+                                machine_normalized=\$(echo \"\$machine\" | sed 's/_/-/g')
+                                # Only output machines that exist in project configuration
+                                if echo \"\$PROJECT_MACHINES\" | grep -q \"\$machine_normalized\"; then
+                                    echo \"MACHINE:\$machine_normalized:\$size\"
+                                fi
+                            done
+                        fi
+                        # Also check build_* directories for compatibility
+                        for build_dir in build_* build */build; do
+                            [ -d \"\$build_dir/tmp/deploy/images\" ] 2>/dev/null || continue
+                            for machine_dir in \"\$build_dir/tmp/deploy/images\"/*; do
+                                [ -d \"\$machine_dir\" ] || continue
+                                machine=\$(basename \"\$machine_dir\")
+                                size=\$(du -sb \"\$machine_dir\" 2>/dev/null | cut -f1 || echo '0')
+                                # Convert underscores to hyphens for matching (Yocto converts hyphens to underscores in directory names)
+                                machine_normalized=\$(echo \"\$machine\" | sed 's/_/-/g')
+                                # Only output machines that exist in project configuration
+                                if echo \"\$PROJECT_MACHINES\" | grep -q \"\$machine_normalized\"; then
+                                    echo \"MACHINE:\$machine_normalized:\$size\"
+                                fi
+                            done
+                        done
+                    " 2>/dev/null || echo "")
+                    
+                    echo "  [3/3] 📦 Checking sstate-cache..."
+                    local sstate_size=$(timeout 10 docker run --rm -v "$volume:$WORKDIR_MOUNT" alpine:latest sh -c "
+                        cd $WORKDIR_MOUNT 2>/dev/null || exit 1
+                        total_sstate=0
+                        # Check direct sstate-cache
+                        if [ -d sstate-cache ]; then
+                            size=\$(du -sb sstate-cache 2>/dev/null | cut -f1 || echo '0')
+                            total_sstate=\$((total_sstate + size))
+                        fi
+                        # Also check build_* directories for compatibility
+                        for build_dir in build_* build */build; do
+                            [ -d \"\$build_dir/sstate-cache\" ] 2>/dev/null || continue
+                            size=\$(du -sb \"\$build_dir/sstate-cache\" 2>/dev/null | cut -f1 || echo '0')
+                            total_sstate=\$((total_sstate + size))
+                        done
+                        echo \$total_sstate
+                    " 2>/dev/null || echo "0")
+                    
+                    echo "  ✅ Analysis complete!"
+                    
+                    local vol_total_size=$tmp_size
+                fi
+                
+                # Convert bytes to gigabytes format
+                local total_gb=$((vol_total_size / 1024 / 1024 / 1024))
+                echo "  💾 tmp: ${total_gb}GB"
+                
+                # Show machines - only those that exist in project AND have build artifacts
+                if [ -n "$machines_info" ]; then
+                    echo "  🖥️  Built machines (project + artifacts):"
+                    local found_relevant_machines=false
+                    echo "$machines_info" | while IFS= read -r line; do
+                        [ -z "$line" ] && continue
+                        machine=$(echo "$line" | cut -d: -f2)
+                        size=$(echo "$line" | cut -d: -f3)
+                        
+                        # Machine is already filtered by Docker container, so just display it
+                        local machine_gb=$((size / 1024 / 1024 / 1024))
+                        echo "    - $machine: ${machine_gb}GB (cleanable)"
+                        found_relevant_machines=true
+                        # Store this machine for summary
+                        echo "$machine:$size" >> "$built_machines_file"
+                    done
+                    
+                    # If no relevant machines found, show a message
+                    if [ "$found_relevant_machines" = false ]; then
+                        echo "    (No built machines match project configuration)"
+                    fi
+                fi
+                
+                # Store size for total calculation
+                echo "$vol_total_size" >> "$temp_file"
+                echo
+            done
+            
+            # Calculate total from temp file
+            if [ -f "$temp_file" ]; then
+                total_size=$(awk '{sum += $1} END {print sum}' "$temp_file" 2>/dev/null || echo "0")
+                rm -f "$temp_file"
+            fi
+            
+            # Show summary of built machines across all volumes
+            if [ -f "$built_machines_file" ] && [ -s "$built_machines_file" ]; then
+                echo "📋 Summary - Built machines in project:"
+                # Aggregate machine sizes across all volumes
+                awk -F: '{machine_total[$1] += $2} END {for (machine in machine_total) print machine ":" machine_total[machine]}' "$built_machines_file" | sort | while IFS= read -r line; do
+                    [ -z "$line" ] && continue
+                    machine=$(echo "$line" | cut -d: -f1)
+                    size=$(echo "$line" | cut -d: -f2)
+                    local machine_gb=$((size / 1024 / 1024 / 1024))
+                    echo "  🖥️  $machine: ${machine_gb}GB (cleanable with: workdir_cleanup clean $machine)"
+                done
+                rm -f "$built_machines_file"
+                echo
+            else
+                echo "📋 No built machines found that match project configuration"
+                [ -f "$built_machines_file" ] && rm -f "$built_machines_file"
+                echo
+            fi
+            
+            # Convert total to gigabytes format
+            local total_gb=$((total_size / 1024 / 1024 / 1024))
+            echo "💾 Total tmp directory size: ${total_gb}GB"
+            echo
+            
+            # Show overall machine footprint summary across all workdir volumes
+            echo "📊 Overall Machine Footprint in Workdir:"
+            local overall_machines_file=$(mktemp)
+            
+            echo "$volumes" | while IFS= read -r volume; do
+                [ -z "$volume" ] && continue
+                
+                # Get comprehensive machine footprint for this volume
+                docker run --rm -v "$volume:$WORKDIR_MOUNT" -e "PROJECT_MACHINES=$project_machines_list" alpine:latest sh -c "
+                    cd $WORKDIR_MOUNT 2>/dev/null || exit 1
+                    
+                    # Function to extract machine name from architecture string
+                    extract_machine() {
+                        local arch_part=\"\$1\"
+                        local machine=\$(echo \"\$arch_part\" | sed 's/.*-\\([^-]*-[^-]*\\)-poky-linux/\\1/' | sed 's/.*-\\([^-]*-[^-]*\\)-fslc-linux/\\1/')
+                        [ \"\$machine\" = \"\$arch_part\" ] && {
+                            machine=\$(echo \"\$arch_part\" | sed 's/.*-\\([^-]*\\)-poky-linux/\\1/' | sed 's/.*-\\([^-]*\\)-fslc-linux/\\1/')
+                        }
+                        [ \"\$machine\" = \"\$arch_part\" ] && {
+                            machine=\$(echo \"\$arch_part\" | grep -o 'imx[0-9][a-z]*[^-]*' || echo \"\$arch_part\" | grep -o 'roommate[^-]*' || echo 'unknown')
+                        }
+                        echo \"\$machine\"
+                    }
+                    
+                    # Collect all machine-specific directories and their sizes
+                    declare -A machine_sizes
+                    
+                    # Process work directory
+                    if [ -d tmp/work ]; then
+                        find tmp/work -maxdepth 1 -type d 2>/dev/null | while read arch_dir; do
+                            [ \"\$arch_dir\" = 'tmp/work' ] && continue
+                            arch_part=\$(basename \"\$arch_dir\")
+                            machine=\$(extract_machine \"\$arch_part\")
+                            
+                            if [ \"\$machine\" != 'unknown' ] && [ \"\$machine\" != '' ]; then
+                                machine_normalized=\$(echo \"\$machine\" | sed 's/_/-/g')
+                                if echo \"\$PROJECT_MACHINES\" | grep -q \"\$machine_normalized\"; then
+                                    size=\$(du -sb \"\$arch_dir\" 2>/dev/null | cut -f1 || echo '0')
+                                    [ \"\$size\" != '0' ] && echo \"WORK:\$machine_normalized:\$size\"
+                                fi
+                            fi
+                        done
+                    fi
+                    
+                    # Process deploy/images directory
+                    if [ -d tmp/deploy/images ]; then
+                        for machine_dir in tmp/deploy/images/*; do
+                            [ -d \"\$machine_dir\" ] || continue
+                            machine=\$(basename \"\$machine_dir\")
+                            machine_normalized=\$(echo \"\$machine\" | sed 's/_/-/g')
+                            if echo \"\$PROJECT_MACHINES\" | grep -q \"\$machine_normalized\"; then
+                                size=\$(du -sb \"\$machine_dir\" 2>/dev/null | cut -f1 || echo '0')
+                                [ \"\$size\" != '0' ] && echo \"IMAGES:\$machine_normalized:\$size\"
+                            fi
+                        done
+                    fi
+                    
+                    # Process deploy package repositories
+                    for pkg_type in rpm ipk deb; do
+                        if [ -d tmp/deploy/\$pkg_type ]; then
+                            for machine_dir in tmp/deploy/\$pkg_type/*; do
+                                [ -d \"\$machine_dir\" ] || continue
+                                machine=\$(basename \"\$machine_dir\")
+                                machine_normalized=\$(echo \"\$machine\" | sed 's/_/-/g')
+                                if echo \"\$PROJECT_MACHINES\" | grep -q \"\$machine_normalized\"; then
+                                    size=\$(du -sb \"\$machine_dir\" 2>/dev/null | cut -f1 || echo '0')
+                                    [ \"\$size\" != '0' ] && echo \"PACKAGES:\$machine_normalized:\$size\"
+                                fi
+                            done
+                        fi
+                    done
+                    
+                    # Process stamps directory
+                    if [ -d tmp/stamps ]; then
+                        find tmp/stamps -maxdepth 1 -type d 2>/dev/null | while read arch_dir; do
+                            [ \"\$arch_dir\" = 'tmp/stamps' ] && continue
+                            arch_part=\$(basename \"\$arch_dir\")
+                            machine=\$(extract_machine \"\$arch_part\")
+                            
+                            if [ \"\$machine\" != 'unknown' ] && [ \"\$machine\" != '' ]; then
+                                machine_normalized=\$(echo \"\$machine\" | sed 's/_/-/g')
+                                if echo \"\$PROJECT_MACHINES\" | grep -q \"\$machine_normalized\"; then
+                                    size=\$(du -sb \"\$arch_dir\" 2>/dev/null | cut -f1 || echo '0')
+                                    [ \"\$size\" != '0' ] && echo \"STAMPS:\$machine_normalized:\$size\"
+                                fi
+                            fi
+                        done
+                    fi
+                    
+                    # Process sysroots directory (toolchain)
+                    if [ -d tmp/sysroots ]; then
+                        find tmp/sysroots -maxdepth 1 -type d 2>/dev/null | while read machine_dir; do
+                            [ \"\$machine_dir\" = 'tmp/sysroots' ] && continue
+                            machine=\$(basename \"\$machine_dir\")
+                            machine_normalized=\$(echo \"\$machine\" | sed 's/_/-/g')
+                            if echo \"\$PROJECT_MACHINES\" | grep -q \"\$machine_normalized\"; then
+                                size=\$(du -sb \"\$machine_dir\" 2>/dev/null | cut -f1 || echo '0')
+                                [ \"\$size\" != '0' ] && echo \"SYSROOTS:\$machine_normalized:\$size\"
+                            fi
+                        done
+                    fi
+                    
+                    # Process sysroots-components directory (newer Yocto)
+                    if [ -d tmp/sysroots-components ]; then
+                        find tmp/sysroots-components -maxdepth 1 -type d 2>/dev/null | while read machine_dir; do
+                            [ \"\$machine_dir\" = 'tmp/sysroots-components' ] && continue
+                            machine=\$(basename \"\$machine_dir\")
+                            machine_normalized=\$(echo \"\$machine\" | sed 's/_/-/g')
+                            if echo \"\$PROJECT_MACHINES\" | grep -q \"\$machine_normalized\"; then
+                                size=\$(du -sb \"\$machine_dir\" 2>/dev/null | cut -f1 || echo '0')
+                                [ \"\$size\" != '0' ] && echo \"SYSROOTS_COMP:\$machine_normalized:\$size\"
+                            fi
+                        done
+                    fi
+                    
+                    # Process SDK directory
+                    if [ -d tmp/deploy/sdk ]; then
+                        find tmp/deploy/sdk -name '*' -type f 2>/dev/null | while read sdk_file; do
+                            for proj_machine in \$PROJECT_MACHINES; do
+                                if echo \"\$(basename \"\$sdk_file\")\" | grep -q \"\$proj_machine\"; then
+                                    size=\$(du -sb \"\$sdk_file\" 2>/dev/null | cut -f1 || echo '0')
+                                    [ \"\$size\" != '0' ] && echo \"SDK:\$proj_machine:\$size\"
+                                    break
+                                fi
+                            done
+                        done
+                    fi
+                    
+                    # Process licenses directory
+                    if [ -d tmp/deploy/licenses ]; then
+                        for machine_dir in tmp/deploy/licenses/*; do
+                            [ -d \"\$machine_dir\" ] || continue
+                            machine=\$(basename \"\$machine_dir\")
+                            machine_normalized=\$(echo \"\$machine\" | sed 's/_/-/g')
+                            if echo \"\$PROJECT_MACHINES\" | grep -q \"\$machine_normalized\"; then
+                                size=\$(du -sb \"\$machine_dir\" 2>/dev/null | cut -f1 || echo '0')
+                                [ \"\$size\" != '0' ] && echo \"LICENSES:\$machine_normalized:\$size\"
+                            fi
+                        done
+                    fi
+                " 2>/dev/null >> "$overall_machines_file"
+            done
+            
+            # Process and display the overall machine footprint
+            if [ -f "$overall_machines_file" ] && [ -s "$overall_machines_file" ]; then
+                # Aggregate all machine data across volumes and categories
+                awk -F: '
+                {
+                    category = $1
+                    machine = $2
+                    size = $3
+                    machine_total[machine] += size
+                    machine_categories[machine] = machine_categories[machine] (machine_categories[machine] ? ", " : "") category
+                }
+                END {
+                    for (machine in machine_total) {
+                        size_gb = machine_total[machine] / 1024 / 1024 / 1024
+                        printf "  🖥️  %s: %.1fGB (%s)\n", machine, size_gb, machine_categories[machine]
+                    }
+                }' "$overall_machines_file" | sort
+                rm -f "$overall_machines_file"
+            else
+                echo "  No machine-specific data found in workdir volumes"
+                [ -f "$overall_machines_file" ] && rm -f "$overall_machines_file"
+            fi
+            echo
+            
+            ;;
+            
+        *)
+            echo "Usage: cleanup [analysis]"
+            echo "  analysis  - Show workdir analysis with machine footprint (default)"
+            ;;
+    esac
+    
+    _unload_default_exports
+}
+
 _unload_default_exports
 
 echo
@@ -453,6 +1153,8 @@ echo
 echo " * info machines        - list all available machine configurations"
 echo " * info images          - list all available images"
 echo " * info distro          - list all available distros"
+echo
+echo " * cleanup [analysis]           - workdir analysis with machine footprint"
 echo
 echo " * nfs-server start     - starting netboot NFSv3 server"
 echo " * nfs-server stop      - stopping netboot NFSv3 server"
