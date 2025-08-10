@@ -151,24 +151,35 @@ _ensure_docker_volume() {
 _initialize_environment() {
     # Check if we need to build the image
     if [[ "${PULL_VDE}" != "true" ]]; then
-        echo "Building image..."
-        docker build -t ${POKY_IMAGE} \
-            --build-arg POKY_REPO=https://github.com/yoctoproject/poky.git \
-            --build-arg POKY_COMMIT_ID=6505459809380ddcf152a09343e4dc55038de332 \
-            -f ${SCRIPT_DIR}/Dockerfile_22.04 \
-            ${SCRIPT_DIR}/
+        # Only build if the image doesn't already exist
+        if ! docker image inspect "${POKY_IMAGE}" >/dev/null 2>&1; then
+            echo "Building image..."
+            docker build -t ${POKY_IMAGE} \
+                --build-arg POKY_REPO=https://github.com/yoctoproject/poky.git \
+                --build-arg POKY_COMMIT_ID=6505459809380ddcf152a09343e4dc55038de332 \
+                -f ${SCRIPT_DIR}/Dockerfile_22.04 \
+                ${SCRIPT_DIR}/
+        else
+            echo "Image ${POKY_IMAGE} already exists, skipping build"
+        fi
     fi
     
     echo POKY_IMAGE=${POKY_IMAGE}
-    echo "build behaviour: ${vde_build_behaviour[@]}"
     
     # Generate initial compose file and create volume
     _generate_compose_file || return 1
     _ensure_docker_volume || return 1
     
-    # Initial container setup
-    docker compose -f "${PROJECT_TOP}/docker-compose.${ENV_ARCH}.yml" \
-        run --rm "${vde_build_behaviour[@]}" vde
+    # Check if workdir is already initialized to avoid slow container startup
+    local volume_name="${VOLUME_NAME}_workdir"
+    if docker run --rm -v "${volume_name}:/workdir" alpine:latest test -f /workdir/.initialized 2>/dev/null; then
+        echo "Workdir already initialized, skipping container setup"
+    else
+        echo "Initializing workdir for first time..."
+        # Initial container setup
+        docker compose -f "${PROJECT_TOP}/docker-compose.${ENV_ARCH}.yml" \
+            run --rm vde
+    fi
 }
 
 # Common docker execution function
@@ -1140,6 +1151,9 @@ cleanup() {
     
     _unload_default_exports
 }
+
+# Initialize the environment (build Docker image, create volumes, etc.)
+_initialize_environment
 
 _unload_default_exports
 
