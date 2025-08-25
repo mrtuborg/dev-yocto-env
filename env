@@ -1,4 +1,16 @@
 #!/bin/bash
+#
+# Yocto/Poky Build Environment Setup
+#
+# This script sets up a containerized Yocto build environment using Docker.
+#
+# CONTAINER RUNTIME NOTES:
+# - Docker Desktop: Fast volume mounts, automatic permission handling, GUI management
+# - Colima: Free, open-source Docker-compatible runtime, lightweight and fast
+#
+# USAGE:
+#   source ./docker-yocto-env/env
+#
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     echo "This script should be sourced, not executed."
@@ -34,6 +46,17 @@ fi
 # TOASTER_IMAGE=your-registry.azurecr.io/toaster:${PROJECT_VER}
 
 _load_default_exports() {
+    # Detect container runtime (docker only)
+    if command -v docker >/dev/null 2>&1; then
+        CONTAINER_CMD="docker"
+    else
+        echo "ERROR: docker not found in PATH" >&2
+        echo "Please install Docker Desktop or Colima:" >&2
+        echo "  Docker Desktop: https://www.docker.com/products/docker-desktop" >&2
+        echo "  Colima: brew install colima docker && colima start" >&2
+        return 1
+    fi
+    
     YOCTO_RELEASE=kirkstone
     VDE_VERSION=22.04
     VDE_IMAGE=poky-vde
@@ -66,7 +89,7 @@ _load_default_exports() {
     IMAGES_EXCLUDE_DIRS=${IMAGES_EXCLUDE_DIRS:-"sources"}
 
     echo "Environment: ${ENV_ARCH}"
-    #echo "Workdir volume: ${VOLUME_NAME}_workdir"
+    echo "Container runtime: Docker"
 
     # Export environment variables for docker-compose
     export POKY_IMAGE
@@ -83,6 +106,9 @@ _load_default_exports() {
     export DL_PORT
     export MACHINES_EXCLUDE_DIRS
     export IMAGES_EXCLUDE_DIRS
+    
+    # Enable Docker BuildKit for modern image building
+    export DOCKER_BUILDKIT=1
 }
 
 _unload_default_exports() {
@@ -92,6 +118,7 @@ _unload_default_exports() {
     unset WORKSPACE_PATH
     unset FILEBROWSER_PORT
     unset VOLUME_NAME
+    unset DOCKER_BUILDKIT
 }
 
 
@@ -134,13 +161,13 @@ _generate_compose_file() {
     return 0
 }
 
-# Create docker volume only if it doesn't exist (performance optimization)
+# Create ${CONTAINER_CMD} volume only if it doesn't exist (performance optimization)
 _ensure_docker_volume() {
     local volume_name="${VOLUME_NAME}_workdir"
-    if ! docker volume inspect "$volume_name" >/dev/null 2>&1; then
-        echo "Creating docker volume: $volume_name"
-        docker volume create "$volume_name" > /dev/null 2>&1 || {
-            echo "ERROR: Failed to create docker volume: $volume_name" >&2
+    if ! ${CONTAINER_CMD} volume inspect "$volume_name" >/dev/null 2>&1; then
+        echo "Creating volume: $volume_name"
+        ${CONTAINER_CMD} volume create "$volume_name" > /dev/null 2>&1 || {
+            echo "ERROR: Failed to create volume: $volume_name" >&2
             return 1
         }
     fi
@@ -152,9 +179,9 @@ _initialize_environment() {
     # Check if we need to build the image
     if [[ "${PULL_VDE}" != "true" ]]; then
         # Only build if the image doesn't already exist
-        if ! docker image inspect "${POKY_IMAGE}" >/dev/null 2>&1; then
+        if ! ${CONTAINER_CMD} image inspect "${POKY_IMAGE}" >/dev/null 2>&1; then
             echo "Building image..."
-            docker build -t ${POKY_IMAGE} \
+            ${CONTAINER_CMD} build -t ${POKY_IMAGE} \
                 --build-arg POKY_REPO=https://github.com/yoctoproject/poky.git \
                 --build-arg POKY_COMMIT_ID=6505459809380ddcf152a09343e4dc55038de332 \
                 -f ${SCRIPT_DIR}/Dockerfile_22.04 \
@@ -172,13 +199,53 @@ _initialize_environment() {
     
     # Check if workdir is already initialized to avoid slow container startup
     local volume_name="${VOLUME_NAME}_workdir"
-    if docker run --rm -v "${volume_name}:/workdir" alpine:latest test -f /workdir/.initialized 2>/dev/null; then
-        echo "Workdir already initialized, skipping container setup"
+    
+    # Docker doesn't need special volume flags
+    local init_volume_flags=""
+    
+    # Check if workdir is already initialized by checking for marker or content
+    echo "Checking workdir initialization status..."
+    local check_result=$(${CONTAINER_CMD} run --rm \
+        -v "${volume_name}:/workdir${init_volume_flags}" \
+        alpine:latest sh -c 'test -f /workdir/.initialized && echo "initialized" || (test -d /workdir/tmp -o -d /workdir/sstate-cache -o -d /workdir/downloads && echo "has_content" || echo "empty")' 2>/dev/null || echo "empty")
+    
+    if [[ "$check_result" == "initialized" ]]; then
+        echo "Workdir already initialized (marker found), skipping setup"
+    elif [[ "$check_result" == "has_content" ]]; then
+        echo "Workdir has existing content, verifying permissions..."
+        # Check if we can write as the build user, if not fix permissions
+        ${CONTAINER_CMD} run --rm -u ${WORKDIR_UID}:${WORKDIR_GID} \
+            -v "${volume_name}:/workdir${init_volume_flags}" \
+            alpine:latest sh -c "
+                if touch /workdir/.initialized 2>/dev/null; then
+                    echo 'Workdir verified - permissions OK'
+                else
+                    echo 'Cannot write to workdir - permissions need fixing'
+                    exit 1
+                fi
+            " || {
+                echo "Fixing workdir permissions..."
+                ${CONTAINER_CMD} run --rm -u root \
+                    -v "${volume_name}:/workdir${init_volume_flags}" \
+                    alpine:latest sh -c "
+                        chown -R ${WORKDIR_UID}:${WORKDIR_GID} /workdir
+                        chmod -R u+rwX,g+rwX /workdir
+                        echo 'Permissions fixed - ownership set to ${WORKDIR_UID}:${WORKDIR_GID}'
+                    "
+            }
     else
         echo "Initializing workdir for first time..."
-        # Initial container setup
-        docker compose -f "${PROJECT_TOP}/docker-compose.${ENV_ARCH}.yml" \
-            run --rm vde
+        # Run initialization as root to set up permissions, then chown to build user
+        ${CONTAINER_CMD} run --rm -u root \
+            -v "${volume_name}:/workdir${init_volume_flags}" \
+            alpine:latest sh -c "
+                echo 'Setting up workdir structure and permissions...'
+                mkdir -p /workdir/tmp /workdir/downloads /workdir/sstate-cache
+                chown -R ${WORKDIR_UID}:${WORKDIR_GID} /workdir
+                chmod -R u+rwX,g+rwX /workdir
+                touch /workdir/.initialized
+                echo 'Workdir initialization complete - ownership set to ${WORKDIR_UID}:${WORKDIR_GID}'
+            "
     fi
 }
 
@@ -201,17 +268,12 @@ _run_docker() {
         echo "Poky dock in non-interactive mode"
     fi
 
-    # Detect if we're using Podman (with proper OS-specific volume labeling)
+    # Docker handles volume permissions automatically - no special flags needed
     local VOLUME_FLAGS=""
-    if command -v podman >/dev/null 2>&1 && [[ "$(docker --version 2>/dev/null)" == *"podman"* ]]; then
-        # On macOS, Podman might not need :Z flag and it could cause issues
-        if [[ "$(uname -s)" == "Linux" ]]; then
-            VOLUME_FLAGS=":Z"
-            echo "Detected Podman on Linux - using SELinux volume labeling"
-        else
-            echo "Detected Podman on macOS - using standard volume mounts"
-        fi
-    fi
+    local WORKDIR_FLAGS=""
+    local EXTRA_DOCKER_ARGS=()
+    
+    echo "Using Docker - fast volume handling"
 
     # Determine SSH path based on OS
     local SSH_PATH
@@ -226,10 +288,15 @@ _run_docker() {
         -u vari
         --rm
         -v "${PROJECT_TOP}:${WORKSPACE_PATH}${VOLUME_FLAGS}"
-        -v "${VOLUME_NAME}_workdir:/workdir${VOLUME_FLAGS}"
+        -v "${VOLUME_NAME}_workdir:/workdir${WORKDIR_FLAGS}"
         -v "${SSH_PATH}:/home/vari/.ssh${VOLUME_FLAGS}"
         -w "${WORKSPACE_PATH}"
     )
+    
+    # Add extra docker args (e.g., --privileged on macOS)
+    if [[ ${#EXTRA_DOCKER_ARGS[@]} -gt 0 ]]; then
+        docker_args+=("${EXTRA_DOCKER_ARGS[@]}")
+    fi
     
     # Add interactive flag if needed
     if [[ "$interactive" == "true" ]]; then
@@ -251,8 +318,8 @@ _run_docker() {
         echo "Volume flags: ${VOLUME_FLAGS}"
     fi
     
-    # Execute docker run directly (works better with volume flags than docker compose)
-    docker run "${docker_args[@]}"
+    # Execute container run directly (works better with volume flags than compose)
+    ${CONTAINER_CMD} run "${docker_args[@]}"
     return $?
 }
 
@@ -442,18 +509,21 @@ filebrowser() {
             # Use cached compose file generation
             _generate_compose_file || return 1
 
-            docker compose -f ${PROJECT_TOP}/docker-compose.${ENV_ARCH}.yml \
+            echo "🚀 Starting filebrowser service on port ${PORT}..."
+            ${CONTAINER_CMD} compose -f ${PROJECT_TOP}/docker-compose.${ENV_ARCH}.yml \
                 -p "${VOLUME_NAME}" \
                 up -d filebrowser
 
             ;;
         stop)
-            docker compose -f ${PROJECT_TOP}/docker-compose.${ENV_ARCH}.yml \
+            echo "🛑 Stopping filebrowser service..."
+            ${CONTAINER_CMD} compose -f ${PROJECT_TOP}/docker-compose.${ENV_ARCH}.yml \
                 -p "${VOLUME_NAME}" \
                 stop filebrowser
             ;;
         status)
-            docker compose -f ${PROJECT_TOP}/docker-compose.${ENV_ARCH}.yml \
+            echo "📊 Checking filebrowser service status..."
+            ${CONTAINER_CMD} compose -f ${PROJECT_TOP}/docker-compose.${ENV_ARCH}.yml \
                 -p "${VOLUME_NAME}" \
                 ps filebrowser
             ;;
@@ -477,19 +547,26 @@ rpm-host() {
             # Use cached compose file generation
             _generate_compose_file || return 1
 
-            docker compose -f ${PROJECT_TOP}/docker-compose.${ENV_ARCH}.yml \
+            echo "🚀 Starting rpm-host service on port ${PORT}..."
+            ${CONTAINER_CMD} compose -f ${PROJECT_TOP}/docker-compose.${ENV_ARCH}.yml \
                 -p "${VOLUME_NAME}" \
                 up -d rpm-host
             ;;
         stop)
-            docker compose -f ${PROJECT_TOP}/docker-compose.${ENV_ARCH}.yml \
+            echo "🛑 Stopping rpm-host service..."
+            ${CONTAINER_CMD} compose -f ${PROJECT_TOP}/docker-compose.${ENV_ARCH}.yml \
                 -p "${VOLUME_NAME}" \
                 stop rpm-host
             ;;
         status)
-            docker compose -f ${PROJECT_TOP}/docker-compose.${ENV_ARCH}.yml \
-                -p "${VOLUME_NAME}" \
-                ps rpm-host
+            echo "📊 Checking rpm-host service status..."
+            local container_name="${VOLUME_NAME}_rpm-host"
+            if ${CONTAINER_CMD} ps -q --filter "name=${container_name}" | grep -q .; then
+                echo "✅ rpm-host is running"
+                ${CONTAINER_CMD} ps --filter "name=${container_name}" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+            else
+                echo "❌ rpm-host is not running"
+            fi
             ;;
         *)
             echo "Usage: rpm-host {start|stop|status}"
@@ -524,7 +601,7 @@ cleanup() {
             # Convert to space-separated format for easier passing to Docker
             local project_machines_list=$(echo "$project_machines" | tr '\n' ' ')
             
-            local volumes=$(docker volume ls --format "{{.Name}}" | grep -E "^${PROJECT_NAME}-.*_workdir$" | sort)
+            local volumes=$(${CONTAINER_CMD} volume ls --format "{{.Name}}" | grep -E "^${PROJECT_NAME}-.*_workdir$" | sort)
             
             if [ -z "$volumes" ]; then
                 echo "No workdir volumes found for project: ${PROJECT_NAME}"
@@ -547,7 +624,7 @@ cleanup() {
                 echo "  📂 Quick volume inspection..."
                 
                 # Check if volume has content before doing expensive operations
-                local has_content=$(docker run --rm -v "$volume:$WORKDIR_MOUNT" alpine:latest sh -c "
+                local has_content=$(${CONTAINER_CMD} run --rm -v "$volume:$WORKDIR_MOUNT" alpine:latest sh -c "
                     cd $WORKDIR_MOUNT 2>/dev/null || exit 1
                     ls -A . 2>/dev/null | wc -l
                 " 2>/dev/null || echo "0")
@@ -566,7 +643,7 @@ cleanup() {
                     
                     # Only scan directories that contain machine-specific content or are significant
                     local relevant_dirs="work deploy stamps"
-                    local tmp_dirs=$(docker run --rm -v "$volume:$WORKDIR_MOUNT" alpine:latest sh -c "
+                    local tmp_dirs=$(${CONTAINER_CMD} run --rm -v "$volume:$WORKDIR_MOUNT" alpine:latest sh -c "
                         [ -d $WORKDIR_MOUNT/tmp ] || exit 1
                         for dir in $relevant_dirs; do
                             [ -d $WORKDIR_MOUNT/tmp/\$dir ] && echo \$dir
@@ -586,7 +663,7 @@ cleanup() {
                             [ -z "$dirname" ] && continue
                             # Analyze machine-specific content for work and deploy directories first
                             echo "        🔍 Analyzing machine-specific content in \"${dirname}\" directory..."
-                            local machine_breakdown=$(docker run --rm -v "$volume:$WORKDIR_MOUNT" -e "PROJECT_MACHINES=$project_machines_list" alpine:latest sh -c "
+                            local machine_breakdown=$(${CONTAINER_CMD} run --rm -v "$volume:$WORKDIR_MOUNT" -e "PROJECT_MACHINES=$project_machines_list" alpine:latest sh -c "
                                         if [ '$dirname' = 'work' ]; then
                                             # For work directory, look for actual machine directories
                                             # Yocto work structure: tmp/work/ARCH-DISTRO-LINUX/PACKAGE/VERSION-rX/
@@ -749,7 +826,7 @@ cleanup() {
                         done
                         
                         # Calculate total cleanable tmp size in one Docker call
-                        tmp_size=$(docker run --rm -v "$volume:$WORKDIR_MOUNT" -e "PROJECT_MACHINES=$project_machines_list" alpine:latest sh -c "
+                        tmp_size=$(${CONTAINER_CMD} run --rm -v "$volume:$WORKDIR_MOUNT" -e "PROJECT_MACHINES=$project_machines_list" alpine:latest sh -c "
                             # Use a temp file to accumulate sizes since shell variables don't persist across subshells
                             temp_total=/tmp/total_size
                             echo '0' > \$temp_total
@@ -856,7 +933,7 @@ cleanup() {
                     echo "      Tmp total: $((tmp_size / 1024 / 1024 / 1024))GB"
                     
                     echo "  [2/3] 🖥️  Checking for machines..."
-                    local machines_info=$(timeout 15 docker run --rm -v "$volume:$WORKDIR_MOUNT" -e "PROJECT_MACHINES=$project_machines_list" alpine:latest sh -c "
+                    local machines_info=$(timeout 15 ${CONTAINER_CMD} run --rm -v "$volume:$WORKDIR_MOUNT" -e "PROJECT_MACHINES=$project_machines_list" alpine:latest sh -c "
                         cd $WORKDIR_MOUNT 2>/dev/null || exit 1
                         # Check direct tmp/deploy/images structure
                         if [ -d tmp/deploy/images ]; then
@@ -890,7 +967,7 @@ cleanup() {
                     " 2>/dev/null || echo "")
                     
                     echo "  [3/3] 📦 Checking sstate-cache..."
-                    local sstate_size=$(timeout 10 docker run --rm -v "$volume:$WORKDIR_MOUNT" alpine:latest sh -c "
+                    local sstate_size=$(timeout 10 ${CONTAINER_CMD} run --rm -v "$volume:$WORKDIR_MOUNT" alpine:latest sh -c "
                         cd $WORKDIR_MOUNT 2>/dev/null || exit 1
                         total_sstate=0
                         # Check direct sstate-cache
@@ -982,7 +1059,7 @@ cleanup() {
                 [ -z "$volume" ] && continue
                 
                 # Get comprehensive machine footprint for this volume
-                docker run --rm -v "$volume:$WORKDIR_MOUNT" -e "PROJECT_MACHINES=$project_machines_list" alpine:latest sh -c "
+                ${CONTAINER_CMD} run --rm -v "$volume:$WORKDIR_MOUNT" -e "PROJECT_MACHINES=$project_machines_list" alpine:latest sh -c "
                     cd $WORKDIR_MOUNT 2>/dev/null || exit 1
                     
                     # Function to extract machine name from architecture string

@@ -57,7 +57,7 @@ services:
       - ./docker-yocto-env/conf/httpd-custom.conf:/usr/local/apache2/conf/httpd.conf:ro
       - ./poky_tmp/rpm-host-logs:/usr/local/apache2/logs
       - workdir:/usr/local/apache2/htdocs/yocto
-    user: "${WORKDIR_UID}:${WORKDIR_GID}"
+    user: "root"
     depends_on:
       - vde
 
