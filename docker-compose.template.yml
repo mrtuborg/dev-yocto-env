@@ -1,87 +1,55 @@
+version: '3.8'
+
 services:
-  vde:
-    build:
-      dockerfile: Dockerfile_22.04
-      context: ./docker-yocto-env
-      args:
-        USER_ID: ${WORKDIR_UID}
-        USER_GID: ${WORKDIR_GID}
-        POKY_REPO: https://github.com/yoctoproject/poky.git
-        POKY_COMMIT_ID: 6505459809380ddcf152a09343e4dc55038de332
-    image: "${POKY_IMAGE}"
-    platform: linux/${ENV_ARCH}
-    command: [
-        "/bin/sh",
-        "-c",
-        "echo 'Initializing workdir...'; \
-        mkdir -p /workdir 2>/dev/null || true; \
-        chmod 777 /workdir 2>/dev/null || true; \
-        touch /workdir/.initialized 2>/dev/null || echo 'Note: Could not create initialization marker (permissions)'; \
-        chown -hR ${WORKDIR_UID}:${WORKDIR_GID} /workdir 2>/dev/null || echo 'Note: Could not change ownership (permissions)'; \
-        echo 'Workdir initialization complete'",
-      ]
-    ports:
-      - "${TOASTER_WEBUI}:8000"
+  poky:
+    image: ${POKY_IMAGE}
+    container_name: poky_container
     volumes:
-      - ${PROJECT_TOP}:${WORKSPACE_PATH}
-      - workdir:/workdir
-      - ${HOME}/.ssh:/home/vari/.ssh:ro
-    # root user is using only for initialization
-    user: root
-    container_name: "${VOLUME_NAME}_vde"
-    hostname: "${VOLUME_NAME}_vde"
+      - ${VOLUME_NAME}_workdir:/workdir
+      - ${PROJECT_TOP}:/workspace
+      - ${SSH_PATH}:/home/vari/.ssh
+    ports:
+      - "${FILEBROWSER_PORT}:9200"
+      - "${DL_PORT}:9210"
+    environment:
+      - WORKDIR_UID=${WORKDIR_UID}
+      - WORKDIR_GID=${WORKDIR_GID}
+    command: /bin/bash
 
   filebrowser:
     image: filebrowser/filebrowser
-    platform: linux/${ENV_ARCH}
-    container_name: "${VOLUME_NAME}_filebrowser"
-    ports:
-      - "${FILEBROWSER_PORT}:80"
+    container_name: filebrowser
     volumes:
-      - workdir:/srv
-      - /etc/localtime:/etc/localtime:ro
-      - /etc/timezone:/etc/timezone:ro
+      - ${VOLUME_NAME}_workdir:/workdir
+    ports:
+      - "${FILEBROWSER_PORT}:8080"
     environment:
-      - FB_NOAUTH=true
-      - FB_BASEURL=/filebrowser
-    depends_on:
-      - vde
+      - FILEBROWSER_PORT=${FILEBROWSER_PORT}
 
   rpm-host:
-    image: httpd:2.4.63-bookworm
-    platform: linux/${ENV_ARCH}
-    container_name: "${VOLUME_NAME}_rpm-host"
-    ports:
-      - ${DL_PORT}:80
+    image: rpm-host-image
+    container_name: rpm_host
     volumes:
-      - ./docker-yocto-env/conf/httpd-custom.conf:/usr/local/apache2/conf/httpd.conf:ro
-      - ./poky_tmp/rpm-host-logs:/usr/local/apache2/logs
-      - workdir:/usr/local/apache2/htdocs/yocto
-    user: "root"
-    depends_on:
-      - vde
-
-
-  netboot-server:
-    image: ${NETBOOT_SERVER_IMAGE}
-    platform: linux/${ENV_ARCH}
-    container_name: "${VOLUME_NAME}_netboot-server"
-    privileged: true
-    network_mode: "bridge"
-    volumes:
-      - workdir:/workdir:rw
+      - ${VOLUME_NAME}_workdir:/workdir
     ports:
-      - "2049:2049/udp"
-      - "35111:111/udp"
-      - "20048:20048/udp"
-      - "32765-32769:32765-32769/udp"
+      - "${DL_PORT}:80"
     environment:
-      - NFS_SERVER_DEBUG=1
-      - NFSROOT_DIR=/workdir/nfsroot
-    depends_on:
-      - vde
+      - DL_PORT=${DL_PORT}
+
+  nfs-server:
+    image: nfs-server-image
+    container_name: nfs_server
+    volumes:
+      - ${VOLUME_NAME}_workdir:/workdir
+    ports:
+      - "2049:2049"
+    environment:
+      - NFS_EXPORT_PATH=/workdir
+
+networks:
+  default:
+    driver: bridge
 
 volumes:
-  workdir:
-    name: ${VOLUME_NAME}_workdir
-    external: true
+  ${VOLUME_NAME}_workdir:
+    driver: local
