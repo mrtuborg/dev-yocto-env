@@ -1,58 +1,79 @@
-## 1. Add as a submodule to your YOCTO project
-user/yocto_project% git submodule add git@server:docker-yocto-env
+# docker-yocto-env README
 
-## 2. Create symbolik link, i.e:
-user/yocto_project% ln -s ./docker-yocto-env/env ./env
+# Docker Yocto Environment
 
-## 3 To start environment, source the env file:
-user/yocto_project% . ./env
+This project provides a containerized environment for building and managing Yocto projects using Docker. It is designed to simplify the setup and usage of the Yocto build system by leveraging Docker's capabilities.
 
-## 4. All artefacts created by the environment in your YOCTO project should be added to the .gitignore file
+## Project Structure
 
-DEPENDENCIES:
-build_container: see <var-host-docker-containers> repo
+The project is organized into several directories and files:
 
-## Docker image with environment for building Yocto image and SDK tools  
-> Note: Build instructions was inhereted from Variscite with introduction of modern development technics  
+- **core/**: Contains core scripts for environment setup and management.
+  - `env_core.sh`: Main environment setup script.
+  - `plugin_loader.sh`: Dynamically loads plugins from the `plugins` directory.
+  - `common.sh`: Contains common utility functions.
+  - `config.sh`: Manages configuration settings.
 
+- **plugins/**: Contains plugin scripts that extend the functionality of the core environment.
+  - `poky.sh`: Functions related to the Poky build system.
+  - `info.sh`: Functions to retrieve and display information about available machines, images, and distributions.
+  - `cleanup.sh`: Functions for cleaning up the work directory and analyzing Docker volumes.
+  - `filebrowser.sh`: Manages the file browser service.
+  - `rpm-host.sh`: Handles RPM repository hosting functionalities.
+  - `nfs-server.sh`: Manages NFS server functionalities.
 
-### To build image, use following command:  
-```
-IMAGE_NAME=poky-vde
-REGISTRY=roommatedev01.azurecr.io
-VERSION=22.04
-YOCTO_RELEASE=kirkstone
-KIRKSTONE_SHA_ID=6505459809380ddcf152a09343e4dc55038de332
+- **lib/**: Contains utility scripts for Docker and volume management.
+  - `docker_utils.sh`: Utility functions for Docker operations.
+  - `volume_utils.sh`: Functions for managing Docker volumes.
+  - `compose_utils.sh`: Utility functions for handling Docker Compose operations.
 
-docker build -t "${REGISTRY}/${IMAGE_NAME}:${VERSION}" \
-	--build-arg POKY_REPO=https://github.com/yoctoproject/poky.git \
-	--build-arg POKY_COMMIT_ID=${KIRKSTONE_SHA_ID} \
-	-f Dockerfile_${VERSION} .
-```
+- **env/**: Directory for environment-specific configurations or scripts.
 
-As <REGISTRY>, use roommatedev01.azurecr.io  
-As <VERSION>, use Ubuntu Linux Distribution version from following table:  
-(If Dockerfile for some of the Ubuntu Distribution version is absent in this repo - Distribution was not tested and not approved to use)  
+- `docker-compose.template.yml`: Template for Docker Compose configuration.
 
-|                | Ubuntu 18.04 | Ubuntu 20.04 | Ubuntu 22.04 |  
-|----------------|--------------|--------------|--------------|  
-|Yocto Dunfell   |       X      |      X       |              |  
-|Yocto Kirkstone |       X      |      X       |       X      |  
-|Yocto Scarthgap |              |      X       |       X      |  
+- `Dockerfile_22.04`: Instructions for building the Docker image.
 
-## Multiplatform builds  
-### 1. Create BuildKit instance:  
-```
-docker buildx create --use --name buildx_instance
-```
+## Setup Instructions
 
-### 2. Build image for all needed target platforms  
-```
-docker buildx build --push  -t "${REGISTRY}/${IMAGE_NAME}:${YOCTO_RELEASE}-${VERSION}" \
-        --platform linux/amd64,linux/arm64 \
-        --builder buildx_instance \
-        --build-arg POKY_REPO=https://github.com/yoctoproject/poky.git \
-        --build-arg POKY_COMMIT_ID=${KIRKSTONE_SHA_ID} \
-        -f Dockerfile_${VERSION} .
-```
+1. **Clone the Repository**: 
+   ```bash
+   git clone <repository-url>
+   cd docker-yocto-env
+   ```
 
+2. **Build the Docker Image**:
+   ```bash
+   docker build -t yocto-env -f Dockerfile_22.04 .
+   ```
+
+3. **Source the Environment**:
+   To set up the environment, source the `env_core.sh` script:
+   ```bash
+   source core/env_core.sh
+   ```
+
+4. **Load Plugins**:
+   The environment will automatically load available plugins from the `plugins` directory.
+
+## Usage Guidelines
+
+After sourcing the environment, you can use the following commands:
+
+- **Poky Commands**: Interact with the Poky build system.
+- **Info Commands**: Retrieve information about available machines, images, and distributions.
+- **Cleanup Commands**: Clean up the work directory and analyze Docker volumes.
+- **File Browser Commands**: Manage the file browser service.
+- **RPM Host Commands**: Handle RPM repository hosting functionalities.
+- **NFS Server Commands**: Manage NFS server functionalities.
+
+## Available Commands
+
+For a list of available commands and their usage, refer to the documentation within each plugin script or the core environment script.
+
+## Contributing
+
+Contributions are welcome! Please submit a pull request or open an issue for any enhancements or bug fixes.
+
+## License
+
+This project is licensed under the MIT License. See the LICENSE file for more details.
