@@ -38,6 +38,13 @@ if [[ "$(uname -s)" == "Linux" ]]; then
     WORKDIR_GID=$(id -g $USER)
 fi
 
+# Determine SSH path based on OS
+if [[ "$(uname -s)" == "Linux" ]]; then
+    SSH_PATH="/home/$USER/.ssh"
+else
+    SSH_PATH="/Users/$USER/.ssh"
+fi
+
 # Directory exclusion variables for info commands
 MACHINES_EXCLUDE_DIRS=${MACHINES_EXCLUDE_DIRS:-"sources"}
 IMAGES_EXCLUDE_DIRS=${IMAGES_EXCLUDE_DIRS:-"sources"}
@@ -54,6 +61,7 @@ export ENV_ARCH
 export VOLUME_NAME
 export TOASTER_WEBUI
 export DL_PORT
+export SSH_PATH
 export MACHINES_EXCLUDE_DIRS
 export IMAGES_EXCLUDE_DIRS
 
