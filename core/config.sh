@@ -18,7 +18,7 @@ POKY_IMAGE=${DOCKER_REGISTRY}/${VDE_IMAGE}:${YOCTO_RELEASE}-${VDE_VERSION}
 
 # Define workspace and project settings
 PROJECT_TOP=$(git rev-parse --show-toplevel)
-PROJECT_NAME=$(basename ${PROJECT_TOP} | tr '.' '-')
+PROJECT_NAME=$(basename ${PROJECT_TOP} | tr '.' '-' | tr '[:upper:]' '[:lower:]')
 WORKSPACE_PATH=/workspace
 POKY_TMP_DIR=poky_tmp
 
