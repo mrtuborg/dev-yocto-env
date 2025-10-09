@@ -52,7 +52,7 @@ _load_default_exports() {
     NETBOOT_SERVER_IMAGE=roommatedev01.azurecr.io/netboot-server:latest
 
     PROJECT_TOP=$(git rev-parse --show-toplevel)
-    PROJECT_NAME=$(basename ${PROJECT_TOP} | tr '.' '-')
+    PROJECT_NAME=$(basename ${PROJECT_TOP} | tr '.' '-' | tr '[:upper:]' '[:lower:]')
     POKY_TMP_DIR=poky_tmp
     WORKSPACE_PATH=/workspace
 
