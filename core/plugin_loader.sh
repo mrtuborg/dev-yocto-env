@@ -55,7 +55,7 @@ show_plugin_commands() {
                 if [ -n "$current_plugin" ]; then
                     echo ""
                 fi
-                echo "[$plugin plugin]"
+                ### echo "[$plugin plugin]"
                 current_plugin="$plugin"
             fi
             printf " * %-25s - %s\n" "$command" "$description"

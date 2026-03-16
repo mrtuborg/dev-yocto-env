@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   poky:
     image: ${POKY_IMAGE}
