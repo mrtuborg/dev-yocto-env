@@ -41,6 +41,8 @@ ENV_ARCH=${1:-${ENV_ARCH:-$(uname -m)}}
 
 # Choose how to retrieve poky-vde image: build or pull
 # PULL_VDE environment variable (build by default)
+PULL_VDE="${PULL_VDE:-false}"
+
 if [[ "${PULL_VDE}" == "true" ]]; then
     echo "Pulling poky-vde image"
 else
