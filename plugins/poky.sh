@@ -48,7 +48,9 @@ poky() {
 
     if [ -f "${BUILD_DIR}/${SECRETS_ENV_FILE}" ]; then
         echo "Sourcing secrets environment file: ${SECRETS_ENV_FILE}"
-        POKY_ENVIRONMENT="${BUILD_DIR}/${SECRETS_ENV_FILE}; source ${POKY_ENVIRONMENT}"
+        POKY_ENVIRONMENT="${BUILD_DIR}/${SECRETS_ENV_FILE}; \
+                            source ${BUILD_DIR}/apply_passthrough.sh; \
+                            source ${POKY_ENVIRONMENT}"
     else
         echo "No secrets environment file found at ${SECRETS_ENV_FILE}, skipping sourcing."
     fi
@@ -62,6 +64,7 @@ poky() {
     case ${COMMAND_TO_RUN} in
         shell)
             if [ -n "${BUILD_DIR}" ]; then
+                cp docker-yocto-env/scripts/apply_passthrough.sh ${BUILD_DIR}
                 _poky_dock linux/${ENV_ARCH} "source ${POKY_ENVIRONMENT} ${BUILD_DIR}; ${SHELL}"
             else 
                 _poky_dock linux/${ENV_ARCH} "${SHELL}"
@@ -69,6 +72,7 @@ poky() {
             ;;
         run)
             if [ -n "${BUILD_DIR}" ]; then
+                cp docker-yocto-env/scripts/apply_passthrough.sh ${BUILD_DIR}
                 _poky_dock_cmd linux/${ENV_ARCH} "source ${POKY_ENVIRONMENT} ${BUILD_DIR}; ${REMAINING_ARGS}" 
                 return $?
             else
