@@ -27,7 +27,6 @@ poky() {
     local ARGS=("${@}") # ARGS array, could contain DIR as the 1st element
     local BUILD_DIR=""
     local REMAINING_ARGS=""
-    local SHELL="export HISTFILE=${SHELL_HISTFILE}; /bin/bash"
 
     if [ -n "${ARGS}" ]; then            # All this make sense only if we have arguments
         if [ "${#ARGS[@]}" -lt 2 ]; then # One argument case
@@ -44,6 +43,17 @@ poky() {
             REMAINING_ARGS="${ARGS[@]}"  # Remaining part is exec command
         fi
     fi
+
+    local SECRETS_ENV_FILE="conf/secrets.env"
+
+    if [ -f "${BUILD_DIR}/${SECRETS_ENV_FILE}" ]; then
+        echo "Sourcing secrets environment file: ${SECRETS_ENV_FILE}"
+        POKY_ENVIRONMENT="${BUILD_DIR}/${SECRETS_ENV_FILE}; source ${POKY_ENVIRONMENT}"
+    else
+        echo "No secrets environment file found at ${SECRETS_ENV_FILE}, skipping sourcing."
+    fi
+
+    local SHELL="export HISTFILE=${SHELL_HISTFILE}; ${REMAINING_ARGS}/bin/bash"
 
     echo POKY_IMAGE=${POKY_IMAGE}
     # Use cached compose file generation
