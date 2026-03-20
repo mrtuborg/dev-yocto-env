@@ -125,6 +125,7 @@ RUN apt-get update && \
     u-boot-tools \
     vim \
     less \
+    rpm \
     && (apt-get install -y gcc-multilib g++-multilib || echo "Warning: not installing gcc-multilib")
 
 # Set up a python virtual environment
