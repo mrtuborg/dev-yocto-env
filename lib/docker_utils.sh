@@ -86,6 +86,14 @@ _run_docker() {
         SSH_PATH="/Users/$USER/.ssh"
     fi
 
+    # Determine git-credentials path (created by CI for HTTPS auth)
+    local GIT_CREDENTIALS_PATH
+    if [[ "$(uname -s)" == "Linux" ]]; then
+        GIT_CREDENTIALS_PATH="/home/$USER/.git-credentials"
+    else
+        GIT_CREDENTIALS_PATH="/Users/$USER/.git-credentials"
+    fi
+
     # Prepare docker arguments
     local docker_args=(
         -u vari
@@ -95,6 +103,19 @@ _run_docker() {
         -v "${SSH_PATH}:/home/vari/.ssh${VOLUME_FLAGS}"
         -w "${WORKSPACE_PATH}"
     )
+
+    # Mount git-credentials if available (for HTTPS fetches with GHE_TOKEN).
+    # BitBake sanitises the environment, so GIT_CONFIG_* env vars won't reach
+    # the fetcher's git process.  Instead, mount a .gitconfig that enables the
+    # credential store — git reads $HOME/.gitconfig natively and BitBake
+    # preserves HOME="/home/vari".
+    if [[ -f "$GIT_CREDENTIALS_PATH" ]]; then
+        mkdir -p "${PROJECT_TOP}/${POKY_TMP_DIR}"
+        local _gitcfg="${PROJECT_TOP}/${POKY_TMP_DIR}/.gitconfig-docker"
+        printf '[credential]\n\thelper = store\n' > "$_gitcfg"
+        docker_args+=(-v "${GIT_CREDENTIALS_PATH}:/home/vari/.git-credentials:ro${VOLUME_FLAGS}")
+        docker_args+=(-v "${_gitcfg}:/home/vari/.gitconfig:ro${VOLUME_FLAGS}")
+    fi
     
     # Add extra docker args (e.g., --privileged on macOS)
     if [[ ${#EXTRA_DOCKER_ARGS[@]} -gt 0 ]]; then
