@@ -25,8 +25,9 @@ PASSTHROUGH=$(grep -h "BB_ENV_PASSTHROUGH_ADDITIONS" "$LOCALCONF" \
     | sed -e 's/.*BB_ENV_PASSTHROUGH_ADDITIONS[[:space:]]*+=//g' \
           -e 's/"//g')
 
-# Apply them to the environment BEFORE setup-environment runs
-export BB_ENV_PASSTHROUGH_ADDITIONS="$BB_ENV_PASSTHROUGH_ADDITIONS $PASSTHROUGH"
+# Deduplicate and apply them to the environment BEFORE setup-environment runs
+PASSTHROUGH=$(echo $PASSTHROUGH | tr ' ' '\n' | sort -u | tr '\n' ' ')
+export BB_ENV_PASSTHROUGH_ADDITIONS="$PASSTHROUGH"
 
 echo "Build directory detected: $BUILDDIR"
 echo "Applied passthrough additions:"
