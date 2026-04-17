@@ -46,6 +46,9 @@ poky() {
 
     local SECRETS_ENV_FILE="conf/secrets.env"
 
+    # Reset to the original value so repeated calls don't accumulate.
+    POKY_ENVIRONMENT="${WORKSPACE_PATH}/setup-environment"
+
     if [ -f "${BUILD_DIR}/${SECRETS_ENV_FILE}" ]; then
         echo "Sourcing secrets environment file: ${SECRETS_ENV_FILE}"
         POKY_ENVIRONMENT="${BUILD_DIR}/${SECRETS_ENV_FILE}; \
