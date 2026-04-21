@@ -20,7 +20,7 @@ _load_poky_exports() {
 }
 
 poky() {
-    _load_default_exports
+    _load_default_exports || return 1
     local COMMAND_TO_RUN="${1}"
     
     shift 1
