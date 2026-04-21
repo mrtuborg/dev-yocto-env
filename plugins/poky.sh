@@ -1,5 +1,5 @@
 #!/bin/bash
-# File: /docker-yocto-env-1/plugins/poky.sh
+# File: /docker-yocto-env/plugins/poky.sh
 
 # Poky/Yocto build system plugin
 # Handles yocto shell, run, and toaster commands
@@ -20,7 +20,7 @@ _load_poky_exports() {
 }
 
 poky() {
-    _load_default_exports
+    _load_default_exports || return 1
     local COMMAND_TO_RUN="${1}"
     
     shift 1

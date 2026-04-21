@@ -1,5 +1,5 @@
 #!/bin/bash
-# File: /docker-yocto-env-1/core/env_core.sh
+# File: /docker-yocto-env/core/env_core.sh
 
 # Core environment initialization
 
@@ -39,7 +39,7 @@ _initialize_environment() {
     echo "Initializing Yocto environment..."
     
     # Load default exports first
-    _load_default_exports
+    _load_default_exports || return 1
     
     # Check if we need to build the image
     if [[ "${PULL_VDE}" != "true" ]]; then
@@ -50,7 +50,7 @@ _initialize_environment() {
                 --build-arg POKY_REPO=https://github.com/yoctoproject/poky.git \
                 --build-arg POKY_COMMIT_ID=6505459809380ddcf152a09343e4dc55038de332 \
                 -f ${SCRIPT_DIR}/Dockerfile_22.04 \
-                ${SCRIPT_DIR}/
+                ${SCRIPT_DIR}/ || return 1
         else
             echo "Image ${POKY_IMAGE} already exists, skipping build"
         fi

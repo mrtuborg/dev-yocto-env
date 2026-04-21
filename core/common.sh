@@ -1,5 +1,5 @@
 #!/bin/bash
-# File: /docker-yocto-env-1/core/common.sh
+# File: /docker-yocto-env/core/common.sh
 
 # Common utility functions for docker-yocto-env
 

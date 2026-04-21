@@ -1,5 +1,5 @@
 #!/bin/bash
-# File: /docker-yocto-env-1/plugins/cleanup.sh
+# File: /docker-yocto-env/plugins/cleanup.sh
 
 # Cleanup plugin
 # Provides workdir analysis and cleanup functionality
