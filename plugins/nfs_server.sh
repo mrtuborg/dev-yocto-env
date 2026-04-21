@@ -1,5 +1,5 @@
 #!/bin/bash
-# File: /docker-yocto-env-1/plugins/nfs_server.sh
+# File: /docker-yocto-env/plugins/nfs_server.sh
 
 # NFS server plugin
 # Manages NFS server for netboot functionality

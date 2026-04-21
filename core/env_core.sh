@@ -1,5 +1,5 @@
 #!/bin/bash
-# File: /docker-yocto-env-1/core/env_core.sh
+# File: /docker-yocto-env/core/env_core.sh
 
 # Core environment initialization
 

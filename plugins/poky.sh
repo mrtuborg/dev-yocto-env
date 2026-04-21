@@ -1,5 +1,5 @@
 #!/bin/bash
-# File: /docker-yocto-env-1/plugins/poky.sh
+# File: /docker-yocto-env/plugins/poky.sh
 
 # Poky/Yocto build system plugin
 # Handles yocto shell, run, and toaster commands

@@ -10,7 +10,7 @@
 # - Colima: Free, open-source Docker-compatible runtime, lightweight and fast
 #
 # USAGE:
-#   source ./docker-yocto-env-1/env
+#   source ./docker-yocto-env/env
 #
 
 # Prevent direct execution

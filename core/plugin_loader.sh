@@ -1,5 +1,5 @@
 #!/bin/bash
-# File: /docker-yocto-env-1/core/plugin_loader.sh
+# File: /docker-yocto-env/core/plugin_loader.sh
 
 # This script dynamically loads plugin scripts from the plugins directory
 # and provides a command registration system for organizing functionality.

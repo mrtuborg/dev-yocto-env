@@ -1,5 +1,5 @@
 #!/bin/bash
-# File: /docker-yocto-env-1/plugins/rpm_host.sh
+# File: /docker-yocto-env/plugins/rpm_host.sh
 
 # RPM host service plugin
 # Manages RPM repository hosting service

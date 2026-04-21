@@ -1,5 +1,5 @@
 #!/bin/bash
-# File: /docker-yocto-env-1/plugins/filebrowser.sh
+# File: /docker-yocto-env/plugins/filebrowser.sh
 
 # Filebrowser service plugin
 # Manages filebrowser web interface
