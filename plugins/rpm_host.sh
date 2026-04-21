@@ -1,5 +1,5 @@
 #!/bin/bash
-# File: /docker-yocto-env-1/plugins/rpm_host.sh
+# File: /docker-yocto-env/plugins/rpm_host.sh
 
 # RPM host service plugin
 # Manages RPM repository hosting service
@@ -13,7 +13,7 @@ rpm_host() {
     local COMMAND="$1"
     local PORT="${2:-${DL_PORT}}" # Use the second argument or default to DL_PORT
 
-    _load_default_exports
+    _load_default_exports || return 1
     case ${COMMAND} in
         start)
             _start_compose_service "rpm-host" "DL_PORT" "$PORT"

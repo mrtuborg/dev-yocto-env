@@ -1,5 +1,5 @@
 #!/bin/bash
-# File: /docker-yocto-env-1/lib/docker_utils.sh
+# File: /docker-yocto-env/lib/docker_utils.sh
 
 # Common docker execution utilities shared across plugins
 

@@ -1,5 +1,5 @@
 #!/bin/bash
-# File: /docker-yocto-env-1/plugins/filebrowser.sh
+# File: /docker-yocto-env/plugins/filebrowser.sh
 
 # Filebrowser service plugin
 # Manages filebrowser web interface
@@ -12,7 +12,7 @@ filebrowser_init() {
 filebrowser() {
     local COMMAND="$1"
     local PORT="${2:-${FILEBROWSER_PORT}}" # Use the second argument or default to FILEBROWSER_PORT
-    _load_default_exports
+    _load_default_exports || return 1
 
     case ${COMMAND} in
         start)

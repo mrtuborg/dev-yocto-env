@@ -1,5 +1,5 @@
 #!/bin/bash
-# File: /docker-yocto-env-1/plugins/info.sh
+# File: /docker-yocto-env/plugins/info.sh
 
 # System information plugin
 # Provides commands to query available machines, images, and distros
