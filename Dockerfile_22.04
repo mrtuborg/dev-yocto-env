@@ -141,13 +141,12 @@ WORKDIR /home/vari
 ENV LANG=en_US.UTF-8
 
 # Install the toaster requirements.
-RUN git clone ${POKY_REPO} --depth=1 /tmp/poky && \
-    cd /tmp/poky && \
-    git fetch --depth 1 origin ${POKY_COMMIT_ID} && \
-    git reset --hard ${POKY_COMMIT_ID}; \
+RUN curl -L \
+      "https://git.yoctoproject.org/poky/plain/bitbake/toaster-requirements.txt?id=${POKY_COMMIT_ID}" \
+      -o /tmp/toaster-requirements.txt && \
     ${VIRTUAL_ENV}/bin/activate && \
     python3 -m pip install --upgrade pip && \
-    python3 -m pip install --no-cache-dir -r /tmp/poky/bitbake/toaster-requirements.txt
+    python3 -m pip install --no-cache-dir -r /tmp/toaster-requirements.txt
 
 USER root
 
