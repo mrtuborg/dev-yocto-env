@@ -23,7 +23,7 @@ rpm_host() {
             ;;
         status)
             echo "📊 Checking rpm-host service status..."
-            local container_name="rpm_host"
+            local container_name="${PROJECT_NAME}_rpm_host"
             if ${CONTAINER_CMD} ps -q --filter "name=${container_name}" | grep -q .; then
                 echo "✅ rpm-host is running"
                 ${CONTAINER_CMD} ps --filter "name=${container_name}" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"

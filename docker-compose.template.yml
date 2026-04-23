@@ -1,7 +1,7 @@
 services:
   poky:
     image: ${POKY_IMAGE}
-    container_name: poky_container
+    container_name: ${PROJECT_NAME}_poky
     volumes:
       - workdir:/workdir
       - ${PROJECT_TOP}:/workspace
@@ -17,7 +17,7 @@ services:
   filebrowser:
     image: filebrowser/filebrowser
     platform: linux/${ENV_ARCH}
-    container_name: filebrowser
+    container_name: ${PROJECT_NAME}_filebrowser
     volumes:
       - workdir:/srv
     ports:
@@ -29,7 +29,7 @@ services:
   rpm-host:
     image: httpd:2.4.63-bookworm
     platform: linux/${ENV_ARCH}
-    container_name: rpm_host
+    container_name: ${PROJECT_NAME}_rpm_host
     volumes:
       - ${SCRIPT_DIR}/conf/httpd-custom.conf:/usr/local/apache2/conf/httpd.conf:ro
       - ${PROJECT_TOP}/poky_tmp/rpm-host-logs:/usr/local/apache2/logs
@@ -42,7 +42,7 @@ services:
 
   nfs-server:
     image: nfs-server-image
-    container_name: nfs_server
+    container_name: ${PROJECT_NAME}_nfs_server
     volumes:
       - workdir:/workdir
     ports:

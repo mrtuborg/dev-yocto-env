@@ -165,6 +165,8 @@ _start_compose_service() {
     # Export the port environment variable if provided
     if [ -n "$port_var" ] && [ -n "$port_value" ]; then
         export "$port_var"="$port_value"
+        # Port has changed — invalidate cached compose file so envsubst picks up new value
+        unset _COMPOSE_FILE_GENERATED
     fi
     
     # Generate compose file
