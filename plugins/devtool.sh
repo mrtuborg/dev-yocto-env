@@ -275,13 +275,13 @@ _devtool_search() {
         recipe=$(basename "$(dirname "$(dirname "$pkg_latest")")")
 
         # Check each individual path against the pattern
-        while IFS= read -r f; do
+        for f in $filelist; do
             [[ -z "$f" ]] && continue
             if printf '%s' "$f" | grep -qE "$pattern"; then
                 printf "%-55s  pkg:%-30s  recipe:%s\n" "$f" "$pkg" "$recipe"
                 (( found++ )) || true
             fi
-        done < <(printf '%s' "$filelist" | tr ' ' '\n')
+        done
     done <<< "$candidates"
 
     [[ $found -eq 0 ]] && echo "No files found matching: $pattern" >&2 && return 1
@@ -314,10 +314,10 @@ _devtool_files() {
 
         pkg=$(basename "$(dirname "$pkg_latest")")
         echo "--- $pkg ---"
-        while IFS= read -r f; do
+        for f in $filelist; do
             [[ -z "$f" ]] && continue
             echo "  $f"
-        done < <(printf '%s' "$filelist" | tr ' ' '\n')
+        done
         (( found++ )) || true
     done < <(find "$bh" -mindepth 4 -maxdepth 4 -name latest -path "*/${recipe}/*" 2>/dev/null)
 

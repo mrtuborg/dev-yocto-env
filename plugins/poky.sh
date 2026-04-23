@@ -6,7 +6,7 @@
 
 # Plugin initialization
 poky_init() {
-    register_plugin_command "poky" "poky" "Yocto/Poky build system interface" "poky {shell|run|toaster} [dir] [args] - Yocto build environment"
+    register_plugin_command "poky" "poky" "Yocto/Poky build system interface" "poky {shell|run|logs|toaster} [dir] [args] - Yocto build environment"
     
     # Load plugin-specific exports
     _load_poky_exports
@@ -17,6 +17,31 @@ _load_poky_exports() {
     export TOASTER_ENVIRONMENT="${POKY_TOOLCHAIN_PATH}/oe-init-build-env"
     export POKY_ENVIRONMENT="${WORKSPACE_PATH}/setup-environment"
     export SHELL_HISTFILE="${WORKSPACE_PATH}/${POKY_TMP_DIR}/poky_shell_history"
+}
+
+# Guard against concurrent sessions and clean up stale BitBake server files.
+# - If a container using POKY_IMAGE is already running → abort with a clear message.
+# - If no container is running but lock/socket files exist → they are stale, remove them.
+_bb_session_guard() {
+    local build_dir="${PROJECT_TOP}/${1}"
+
+    local running_container
+    running_container=$(${CONTAINER_CMD} ps --filter "ancestor=${POKY_IMAGE}" --format '{{.Names}}' 2>/dev/null | head -1)
+
+    if [ -n "${running_container}" ]; then
+        echo "ERROR: A poky session is already active (container: ${running_container})" >&2
+        echo "       Attach with: docker logs -f ${running_container}" >&2
+        echo "       Or wait for it to finish before starting a new session." >&2
+        return 1
+    fi
+
+    # No live container — safe to remove stale lock/socket files
+    if [ -S "${build_dir}/bitbake.sock" ] || [ -f "${build_dir}/bitbake.lock" ]; then
+        echo "[poky] Removing stale BitBake server files in ${1}..."
+        rm -f "${build_dir}/bitbake.lock" "${build_dir}/bitbake.sock"
+    fi
+
+    return 0
 }
 
 poky() {
@@ -36,8 +61,8 @@ poky() {
                 REMAINING_ARGS="${ARGS[*]}"
             fi
         else                             # More than one argument case
-            if [ -d "${ARGS[1]}" ]; then # 1st argument is directory
-                BUILD_DIR=${ARGS[1]}
+            if [ -d "${ARGS[0]}" ]; then # 1st argument is directory
+                BUILD_DIR=${ARGS[0]}
                 ARGS=("${ARGS[@]:1}")    # Removing the 1st element
             fi
             REMAINING_ARGS="${ARGS[@]}"  # Remaining part is exec command
@@ -66,6 +91,7 @@ poky() {
 
     case ${COMMAND_TO_RUN} in
         shell)
+            [ -n "${BUILD_DIR}" ] && { _bb_session_guard "${BUILD_DIR}" || return 1; }
             if [ -n "${BUILD_DIR}" ]; then
                 cp docker-yocto-env/scripts/apply_passthrough.sh ${BUILD_DIR}
                 _poky_dock linux/${ENV_ARCH} "source ${POKY_ENVIRONMENT} ${BUILD_DIR}; ${SHELL}"
@@ -73,10 +99,23 @@ poky() {
                 _poky_dock linux/${ENV_ARCH} "${SHELL}"
             fi
             ;;
+        logs)
+            local container
+            container=$(${CONTAINER_CMD} ps \
+                --filter "ancestor=${POKY_IMAGE}" \
+                --format '{{.Names}}' 2>/dev/null | head -1)
+            if [ -z "${container}" ]; then
+                echo "[poky] No active build container found (image: ${POKY_IMAGE})"
+                return 1
+            fi
+            echo "[poky] Attaching to container: ${container}  (Ctrl+C to detach)"
+            ${CONTAINER_CMD} logs -f "${container}"
+            ;;
         run)
+            [ -n "${BUILD_DIR}" ] && { _bb_session_guard "${BUILD_DIR}" || return 1; }
             if [ -n "${BUILD_DIR}" ]; then
                 cp docker-yocto-env/scripts/apply_passthrough.sh ${BUILD_DIR}
-                _poky_dock_cmd linux/${ENV_ARCH} "source ${POKY_ENVIRONMENT} ${BUILD_DIR}; ${REMAINING_ARGS}" 
+                _poky_dock_cmd linux/${ENV_ARCH} "source ${POKY_ENVIRONMENT} ${BUILD_DIR}; ${REMAINING_ARGS}"
                 return $?
             else
                 _poky_dock_cmd linux/${ENV_ARCH} "${REMAINING_ARGS}"
@@ -87,6 +126,7 @@ poky() {
                 echo "Please specify build directory"
                 return 1
             fi
+            _bb_session_guard "${BUILD_DIR}" || return 1
 
             local PORT="${REMAINING_ARGS:-${TOASTER_WEBUI}}"
             export TOASTER_WEBUI="${PORT}" # Set the environment variable for toaster port
@@ -101,7 +141,7 @@ poky() {
                         ${BUILD_DIR}"
             ;;
         *)
-            echo "Usage: poky {shell|run|toaster} [args]"
+            echo "Usage: poky {shell|run|logs|toaster} [args]"
             return 1
             ;;
     esac
