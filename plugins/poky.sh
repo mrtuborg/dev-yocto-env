@@ -83,7 +83,7 @@ poky() {
         shell)
             [ -n "${BUILD_DIR}" ] && { _bb_session_guard "${BUILD_DIR}" || return 1; }
             if [ -n "${BUILD_DIR}" ]; then
-                cp docker-yocto-env/scripts/apply_passthrough.sh ${BUILD_DIR}
+                cp ${SCRIPT_DIR}/scripts/apply_passthrough.sh ${BUILD_DIR}
                 _poky_dock linux/${ENV_ARCH} "source ${POKY_ENVIRONMENT} ${BUILD_DIR}; ${SHELL}"
             else 
                 _poky_dock linux/${ENV_ARCH} "${SHELL}"
@@ -104,7 +104,7 @@ poky() {
         run)
             [ -n "${BUILD_DIR}" ] && { _bb_session_guard "${BUILD_DIR}" || return 1; }
             if [ -n "${BUILD_DIR}" ]; then
-                cp docker-yocto-env/scripts/apply_passthrough.sh ${BUILD_DIR}
+                cp ${SCRIPT_DIR}/scripts/apply_passthrough.sh ${BUILD_DIR}
                 _poky_dock_cmd linux/${ENV_ARCH} "source ${POKY_ENVIRONMENT} ${BUILD_DIR}; ${REMAINING_ARGS}"
                 return $?
             else
