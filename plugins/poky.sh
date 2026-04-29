@@ -49,25 +49,15 @@ poky() {
     local COMMAND_TO_RUN="${1}"
     
     shift 1
-    local ARGS=("${@}") # ARGS array, could contain DIR as the 1st element
     local BUILD_DIR=""
     local REMAINING_ARGS=""
 
-    if [ -n "${ARGS}" ]; then            # All this make sense only if we have arguments
-        if [ "${#ARGS[@]}" -lt 2 ]; then # One argument case
-            if [ -d "${ARGS}" ]; then    # This one argument could be directory or exec command
-                BUILD_DIR="${ARGS}"
-            else
-                REMAINING_ARGS="${ARGS[*]}"
-            fi
-        else                             # More than one argument case
-            if [ -d "${ARGS[0]}" ]; then # 1st argument is directory
-                BUILD_DIR=${ARGS[0]}
-                ARGS=("${ARGS[@]:1}")    # Removing the 1st element
-            fi
-            REMAINING_ARGS="${ARGS[@]}"  # Remaining part is exec command
-        fi
+    # The first argument could be directory or exec command
+    if [ "$#" -gt 0 ] && [ -d "${1}" ]; then
+        BUILD_DIR="${1}"
+        shift
     fi
+    REMAINING_ARGS="$*"
 
     local SECRETS_ENV_FILE="conf/secrets.env"
 
@@ -141,7 +131,7 @@ poky() {
                         ${BUILD_DIR}"
             ;;
         *)
-            echo "Usage: poky {shell|run|logs|toaster} [args]"
+            echo "Usage: poky {shell|run|logs|toaster} [dir] [args]"
             return 1
             ;;
     esac
