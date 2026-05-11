@@ -20,13 +20,16 @@ _load_poky_exports() {
 }
 
 # Guard against concurrent sessions and clean up stale BitBake server files.
-# - If a container using POKY_IMAGE is already running → abort with a clear message.
+# - If a container for THIS project's workdir volume is already running → abort.
 # - If no container is running but lock/socket files exist → they are stale, remove them.
+# The guard is scoped by Docker volume name (derived from the project directory)
+# so that parallel builds for different hardware (hw1/hw2) on the same Docker host
+# don't interfere with each other.
 _bb_session_guard() {
     local build_dir="${PROJECT_TOP}/${1}"
 
     local running_container
-    running_container=$(${CONTAINER_CMD} ps --filter "ancestor=${POKY_IMAGE}" --format '{{.Names}}' 2>/dev/null | head -1)
+    running_container=$(${CONTAINER_CMD} ps --filter "volume=${VOLUME_NAME}_workdir" --format '{{.Names}}' 2>/dev/null | head -1)
 
     if [ -n "${running_container}" ]; then
         echo "ERROR: A poky session is already active (container: ${running_container})" >&2
@@ -92,10 +95,10 @@ poky() {
         logs)
             local container
             container=$(${CONTAINER_CMD} ps \
-                --filter "ancestor=${POKY_IMAGE}" \
+                --filter "volume=${VOLUME_NAME}_workdir" \
                 --format '{{.Names}}' 2>/dev/null | head -1)
             if [ -z "${container}" ]; then
-                echo "[poky] No active build container found (image: ${POKY_IMAGE})"
+                echo "[poky] No active build container found (volume: ${VOLUME_NAME}_workdir)"
                 return 1
             fi
             echo "[poky] Attaching to container: ${container}  (Ctrl+C to detach)"
