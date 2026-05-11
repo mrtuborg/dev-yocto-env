@@ -78,6 +78,14 @@ _run_docker() {
     
     echo "Using Docker - fast volume handling"
 
+    # On Linux use host networking so BitBake inside the container can reach
+    # the shared prserv daemon on the host at localhost:8585.
+    # On macOS Docker Desktop uses a VM; host networking is not supported there,
+    # and developers use per-workspace prserv (localhost:0) anyway.
+    if [[ "$(uname -s)" == "Linux" ]]; then
+        EXTRA_DOCKER_ARGS+=(--network host)
+    fi
+
     # Determine SSH path based on OS
     local SSH_PATH
     if [[ "$(uname -s)" == "Linux" ]]; then
