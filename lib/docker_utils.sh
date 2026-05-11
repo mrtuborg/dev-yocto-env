@@ -112,6 +112,12 @@ _run_docker() {
         -w "${WORKSPACE_PATH}"
     )
 
+    # Forward the host SSH agent socket so the container can use already-loaded keys
+    if [[ -n "$SSH_AUTH_SOCK" ]] && [[ -S "$SSH_AUTH_SOCK" ]]; then
+        docker_args+=(-e SSH_AUTH_SOCK=/run/ssh-agent.sock)
+        docker_args+=(-v "${SSH_AUTH_SOCK}:/run/ssh-agent.sock")
+    fi
+
     # Mount git-credentials if available (for HTTPS fetches with GHE_TOKEN).
     # BitBake sanitises the environment, so GIT_CONFIG_* env vars won't reach
     # the fetcher's git process.  Instead, mount a .gitconfig that enables the
