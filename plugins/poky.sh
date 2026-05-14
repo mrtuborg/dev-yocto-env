@@ -44,6 +44,23 @@ _bb_session_guard() {
         rm -f "${build_dir}/bitbake.lock" "${build_dir}/bitbake.sock"
     fi
 
+    # Clean up stale pseudo databases left by interrupted builds.
+    # These cause "pseudo abort / inode mismatch" failures on subsequent runs.
+    # Safe to remove: pseudo rebuilds its DB from scratch on next task execution.
+    local stale_pseudo
+    stale_pseudo=$(${CONTAINER_CMD} run --rm \
+        -v "${VOLUME_NAME}_workdir:/workdir" \
+        busybox \
+        find /workdir/tmp/work -name 'pseudo' -type d -maxdepth 6 2>/dev/null | wc -l 2>/dev/null || echo 0)
+    if [ "${stale_pseudo:-0}" -gt 0 ] 2>/dev/null; then
+        echo "[poky] Removing ${stale_pseudo} stale pseudo database(s) from previous interrupted builds..."
+        ${CONTAINER_CMD} run --rm \
+            -v "${VOLUME_NAME}_workdir:/workdir" \
+            busybox \
+            sh -c 'find /workdir/tmp/work -name pseudo -type d -maxdepth 6 -exec rm -rf {} + 2>/dev/null; echo done' \
+            2>/dev/null || true
+    fi
+
     return 0
 }
 
