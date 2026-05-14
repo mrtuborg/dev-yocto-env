@@ -10,6 +10,7 @@
 #   devtool search <pattern>
 #   devtool files  <recipe>
 #   devtool recipe <target-path>
+#   devtool clean  [build_dir]       — remove workspace layer from bblayers.conf
 #
 # Requires running container:
 #   devtool build  <target-path>   [build_dir]
@@ -99,6 +100,7 @@ devtool() {
         build)  _devtool_build  "$@" ;;
         deploy) _devtool_deploy "$@" ;;
         diff)   _devtool_diff   "$@" ;;
+        clean)  _devtool_clean  "$@" ;;
         -h|--help|help) _devtool_usage; return 0 ;;
         *)
             echo "ERROR: Unknown sub-command: $subcmd" >&2
@@ -127,6 +129,10 @@ HOST-ONLY (no container required):
 
   recipe <target-path>
       Print the path to the .bb file that builds the owning recipe.
+
+  clean  [build_dir]
+      Remove the workspace layer from bblayers.conf (restore it to
+      its pre-devtool state). Safe to call even if the line is absent.
 
 REQUIRES CONTAINER (poky must be running or startable):
   build  <target-path>  [build_dir]
@@ -524,4 +530,30 @@ cp \"\$img_file\" /workspace/poky_tmp/.devtool_diff_built"
         echo "(files are identical)"
     fi
     return $diff_rc
+}
+
+# ---------------------------------------------------------------------------
+# devtool clean [build_dir]
+# Remove the workspace layer from bblayers.conf, restoring it to pre-devtool state.
+# ---------------------------------------------------------------------------
+_devtool_clean() {
+    local build_dir="${1:-${DEVTOOL_BUILD_DIR:-build_roomboard}}"
+    local bblayers="${PROJECT_TOP}/${build_dir}/conf/bblayers.conf"
+
+    if [[ ! -f "$bblayers" ]]; then
+        echo "ERROR: bblayers.conf not found: $bblayers" >&2
+        return 1
+    fi
+
+    # Match workspace layer lines (with or without quotes, trailing whitespace)
+    local pattern='BBLAYERS.*workspace[[:space:]]*"*$'
+    if ! grep -qE "$pattern" "$bblayers"; then
+        echo "bblayers.conf: workspace layer not present (already clean)"
+        return 0
+    fi
+
+    # Remove the workspace layer line(s)
+    sed -i '' -E "/${pattern}/d" "$bblayers"
+    echo "bblayers.conf: removed workspace layer"
+    echo "  ($bblayers)"
 }
