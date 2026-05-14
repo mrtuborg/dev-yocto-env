@@ -133,8 +133,9 @@ REQUIRES CONTAINER (poky must be running or startable):
       Find the owner and run:  bitbake <recipe>
 
   deploy <target-path>  <device-ip>  [build_dir]
-      Rebuild then deploy the owning recipe to the device with
-      devtool deploy-target.
+      Rebuild then deploy the owning recipe's files to the device
+      via SCP (files) and ssh ln -sf (symlinks). Creates remote
+      directories as needed.
 
   diff   <target-path>  <device-ip>  [build_dir]
       Diff the file as built (image dir inside container) against
@@ -225,17 +226,109 @@ _devtool_deploy() {
     echo "Recipe:  $_DEVTOOL_RECIPE"
     echo "Target:  root@$device_ip"
     echo ""
-    echo "--- step 1/2: bitbake $_DEVTOOL_RECIPE ---"
+
+    # Step 1: build
+    echo "--- step 1/3: bitbake $_DEVTOOL_RECIPE ---"
     if ! poky run "$build_dir" "bitbake $_DEVTOOL_RECIPE"; then
         echo "ERROR: bitbake step failed for recipe '$_DEVTOOL_RECIPE'" >&2
         return 1
     fi
 
+    # Step 2: extract built files from the recipe's image/ dir inside the
+    #         container to a tar on the bind-mounted workspace.
+    #         Use tar with -h to dereference symlinks for a manifest, then
+    #         a second pass to capture symlink targets separately.
     echo ""
-    echo "--- step 2/2: devtool deploy-target $_DEVTOOL_RECIPE root@$device_ip ---"
-    if ! poky run "$build_dir" "devtool deploy-target $_DEVTOOL_RECIPE root@$device_ip"; then
-        echo "ERROR: deploy step failed for recipe '$_DEVTOOL_RECIPE' to $device_ip" >&2
+    echo "--- step 2/3: extracting built files ---"
+    local staging="${PROJECT_TOP}/poky_tmp/_deploy"
+    local tar_file="${PROJECT_TOP}/poky_tmp/_deploy.tar"
+    local symlinks_file="${PROJECT_TOP}/poky_tmp/_deploy_symlinks.txt"
+    rm -rf "$staging" "$tar_file" "$symlinks_file"
+    mkdir -p "$staging"
+
+    local recipe="${_DEVTOOL_RECIPE}"
+    local container_cmd
+    # Create tar of all regular files, then dump symlink info separately
+    container_cmd="recipe_dir=\$(find /workdir/tmp/work -mindepth 2 -maxdepth 2 -name '${recipe}' -type d 2>/dev/null | head -1); \
+[ -z \"\$recipe_dir\" ] && echo 'ERROR: recipe work dir not found — has it been built?' >&2 && exit 1; \
+img_dir=\$(ls -d \"\$recipe_dir\"/*/image 2>/dev/null | head -1); \
+[ -z \"\$img_dir\" ] && echo 'ERROR: image dir not found' >&2 && exit 1; \
+echo \"Image dir: \$img_dir\"; \
+cd \"\$img_dir\" && tar cf /workspace/poky_tmp/_deploy.tar . && echo 'Tar created OK'; \
+find . -type l -printf '%p -> %l\n' > /workspace/poky_tmp/_deploy_symlinks.txt 2>/dev/null || true"
+
+    if ! poky run "$build_dir" "$container_cmd"; then
+        echo "ERROR: failed to extract built files from container" >&2
+        rm -rf "$staging" "$tar_file" "$symlinks_file"
         return 1
+    fi
+
+    if [[ ! -f "$tar_file" ]]; then
+        echo "ERROR: tar file was not created" >&2
+        rm -rf "$staging" "$symlinks_file"
+        return 1
+    fi
+
+    (cd "$staging" && tar xf "$tar_file")
+    rm -f "$tar_file"
+
+    # Step 3: deploy to device — regular files via SCP, symlinks via ssh
+    echo ""
+    echo "--- step 3/3: deploying to root@$device_ip ---"
+    local count=0
+    local fail=0
+
+    # Collect unique remote directories needed
+    local -a remote_dirs=()
+    local f rel
+    while IFS= read -r -d '' f; do
+        rel="${f#"$staging"}"
+        remote_dirs+=("$(dirname "$rel")")
+    done < <(find "$staging" \( -type f -o -type l \) -print0)
+
+    # Create all remote directories in one ssh call
+    if [[ ${#remote_dirs[@]} -gt 0 ]]; then
+        local unique_dirs
+        unique_dirs=$(printf '%s\n' "${remote_dirs[@]}" | sort -u | tr '\n' ' ')
+        ssh -q "root@${device_ip}" "mkdir -p $unique_dirs" 2>/dev/null || true
+    fi
+
+    # Deploy regular files
+    while IFS= read -r -d '' f; do
+        rel="${f#"$staging"}"
+        echo "  $rel"
+        if ! scp -q "$f" "root@${device_ip}:${rel}"; then
+            echo "  WARNING: failed to deploy $rel" >&2
+            (( fail++ )) || true
+        fi
+        (( count++ )) || true
+    done < <(find "$staging" -type f -print0)
+
+    # Deploy symlinks
+    if [[ -f "$symlinks_file" ]] && [[ -s "$symlinks_file" ]]; then
+        local link_path link_target
+        while IFS= read -r line; do
+            [[ -z "$line" ]] && continue
+            link_path="${line%% -> *}"
+            link_target="${line##* -> }"
+            # Strip leading ./ from link_path
+            link_path="${link_path#./}"
+            link_path="/${link_path}"
+            echo "  $link_path -> $link_target  (symlink)"
+            if ! ssh -q "root@${device_ip}" "ln -sf '$link_target' '$link_path'" 2>/dev/null; then
+                echo "  WARNING: failed to create symlink $link_path" >&2
+                (( fail++ )) || true
+            fi
+            (( count++ )) || true
+        done < "$symlinks_file"
+    fi
+
+    rm -rf "$staging" "$symlinks_file"
+    echo ""
+    if [[ $fail -gt 0 ]]; then
+        echo "Deployed $count file(s) to root@$device_ip ($fail warning(s))"
+    else
+        echo "Deployed $count file(s) to root@$device_ip"
     fi
 }
 
