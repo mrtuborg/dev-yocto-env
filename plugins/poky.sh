@@ -44,26 +44,10 @@ _bb_session_guard() {
         rm -f "${build_dir}/bitbake.lock" "${build_dir}/bitbake.sock"
     fi
 
-    # Clean up pseudo databases left by interrupted builds.
-    # IMPORTANT: only remove pseudo dirs that contain a pseudo.pid file — those
-    # are the ones where the pseudo daemon was live when the container was killed.
-    # Removing ALL pseudo dirs (including ones for completed tasks) destroys the
-    # uid→root ownership mappings for files already on disk, causing subsequent
-    # do_package/do_package_write_rpm tasks to see the real host uid (1000) and
-    # fail with: KeyError: 'getpwuid(): uid not found: 1000'.
-    local stale_pseudo
-    stale_pseudo=$(${CONTAINER_CMD} run --rm \
-        -v "${VOLUME_NAME}_workdir:/workdir" \
-        busybox \
-        find /workdir/tmp/work -name 'pseudo.pid' -maxdepth 7 2>/dev/null | wc -l 2>/dev/null || echo 0)
-    if [ "${stale_pseudo:-0}" -gt 0 ] 2>/dev/null; then
-        echo "[poky] Removing ${stale_pseudo} stale pseudo database(s) from previous interrupted builds..."
-        ${CONTAINER_CMD} run --rm \
-            -v "${VOLUME_NAME}_workdir:/workdir" \
-            busybox \
-            sh -c 'find /workdir/tmp/work -name pseudo.pid -maxdepth 7 | sed "s|/pseudo.pid$||" | xargs -r rm -rf; echo done' \
-            2>/dev/null || true
-    fi
+    # NOTE: pseudo databases are intentionally NOT cleaned here.
+    # BitBake manages pseudo lifecycle itself. Removing pseudo dirs externally
+    # orphans stamp files, causing do_package_write_rpm to see real host uid
+    # (1000) and fail. Leave pseudo entirely to BitBake.
 
     return 0
 }
