@@ -120,7 +120,10 @@ _run_docker() {
     if [[ -f "$GIT_CREDENTIALS_PATH" ]]; then
         mkdir -p "${PROJECT_TOP}/${POKY_TMP_DIR}"
         local _gitcfg="${PROJECT_TOP}/${POKY_TMP_DIR}/.gitconfig-docker"
-        printf '[credential]\n\thelper = store\n' > "$_gitcfg"
+        # credential.helper — use stored .git-credentials for HTTPS auth
+        # url.insteadOf    — rewrite SSH git@ URLs to HTTPS so private repos
+        #                    accessible via token don't require SSH key/agent
+        printf '[credential]\n\thelper = store\n[url "https://git.va-dev.no/"]\n\tinsteadOf = git@git.va-dev.no:\n' > "$_gitcfg"
         docker_args+=(-v "${GIT_CREDENTIALS_PATH}:/home/vari/.git-credentials:ro${VOLUME_FLAGS}")
         docker_args+=(-v "${_gitcfg}:/home/vari/.gitconfig:ro${VOLUME_FLAGS}")
     fi
