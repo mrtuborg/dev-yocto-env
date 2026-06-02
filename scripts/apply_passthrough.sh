@@ -20,8 +20,8 @@ if [ ! -f "$LOCALCONF" ]; then
     return 1 2>/dev/null || exit 1
 fi
 
-# Extract passthrough additions from local.conf
-PASSTHROUGH=$(grep -h "BB_ENV_PASSTHROUGH_ADDITIONS" "$LOCALCONF" \
+# Extract passthrough additions from local.conf (skip comment lines)
+PASSTHROUGH=$(grep -h "^[[:space:]]*BB_ENV_PASSTHROUGH_ADDITIONS[[:space:]]*+=" "$LOCALCONF" \
     | sed -e 's/.*BB_ENV_PASSTHROUGH_ADDITIONS[[:space:]]*+=//g' \
           -e 's/"//g')
 
