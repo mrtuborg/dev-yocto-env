@@ -77,8 +77,9 @@ poky() {
         POKY_ENVIRONMENT="${BUILD_DIR}/${SECRETS_ENV_FILE}; \
                             source ${BUILD_DIR}/apply_passthrough.sh; \
                             source ${POKY_ENVIRONMENT}"
-    else
-        echo "No secrets environment file found at ${SECRETS_ENV_FILE}, skipping sourcing."
+    elif [ -n "${BUILD_DIR}" ]; then
+        POKY_ENVIRONMENT="source ${BUILD_DIR}/apply_passthrough.sh; \
+                            source ${POKY_ENVIRONMENT}"
     fi
 
     local SHELL="export HISTFILE=${SHELL_HISTFILE}; ${REMAINING_ARGS}/bin/bash"
