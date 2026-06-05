@@ -115,8 +115,12 @@ _run_docker() {
     # Pass build-path overrides into the container when set on the host.
     # Values must be container-visible paths (e.g. /workdir/... or /workspace/...).
     for _var in DL_DIR SSTATE_DIR TMPDIR; do
-        [ -n "${!_var}" ] && docker_args+=(-e "${_var}=${!_var}")
+        # Use eval for indirect expansion — portable across bash and zsh
+        # (${!_var} is bash-only and breaks when this file is sourced in zsh)
+        eval "_val=\"\${${_var}:-}\""
+        [ -n "$_val" ] && docker_args+=(-e "${_var}=${_val}")
     done
+    unset _val
     unset _var
 
     # Mount git-credentials if available (for HTTPS fetches with GHE_TOKEN).
