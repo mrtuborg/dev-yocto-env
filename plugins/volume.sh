@@ -12,7 +12,7 @@ volume_init() {
 volume() {
     local COMMAND="${1:-info}"
     local WORKDIR_VOLUME="${VOLUME_NAME}_workdir"
-    local SSTATE_VOLUME="${SSTATE_VOLUME_NAME:-${VOLUME_NAME}-sstate}"
+    local SSTATE_VOLUME="${SSTATE_VOLUME_NAME:-${VOLUME_NAME}_sstate}"
 
     _load_default_exports || return 1
 
