@@ -64,6 +64,7 @@ _initialize_environment() {
     
     # Initialize workdir if needed
     _initialize_workdir || return 1
+    _initialize_sstate_volume || return 1
     
     # Load plugins after environment is ready
     load_plugins
@@ -83,7 +84,7 @@ _initialize_workdir() {
     echo "Checking workdir initialization status..."
     local check_result=$(${CONTAINER_CMD} run --rm \
         -v "${volume_name}:/workdir${init_volume_flags}" \
-        alpine:latest sh -c 'test -f /workdir/.initialized && echo "initialized" || (test -d /workdir/tmp -o -d /workdir/sstate-cache -o -d /workdir/downloads && echo "has_content" || echo "empty")' 2>/dev/null || echo "empty")
+        alpine:latest sh -c 'test -f /workdir/.initialized && echo "initialized" || (test -d /workdir/tmp && echo "has_content" || echo "empty")' 2>/dev/null || echo "empty")
     
     if [[ "$check_result" == "initialized" ]]; then
         echo "Workdir already initialized (marker found), skipping setup"
@@ -116,11 +117,51 @@ _initialize_workdir() {
             -v "${volume_name}:/workdir${init_volume_flags}" \
             alpine:latest sh -c "
                 echo 'Setting up workdir structure and permissions...'
-                mkdir -p /workdir/tmp /workdir/downloads /workdir/sstate-cache
+                mkdir -p /workdir/tmp /workdir/downloads
                 chown -R ${WORKDIR_UID}:${WORKDIR_GID} /workdir
                 chmod -R u+rwX,g+rwX /workdir
                 touch /workdir/.initialized
                 echo 'Workdir initialization complete - ownership set to ${WORKDIR_UID}:${WORKDIR_GID}'
+            "
+    fi
+}
+
+# Function to initialize the shared sstate volume.
+# The volume root IS the sstate-cache directory — objects are written directly
+# to the volume root so the rpm-host can serve them at /sstate-cache/PATH
+# without any subpath complications (Docker named volumes don't support subpath mounts).
+# DL_DIR stays in the workdir (/workdir/downloads) since downloads are
+# URL-addressed and immutable — safe to keep per-branch.
+_initialize_sstate_volume() {
+    local sstate_volume="${SSTATE_VOLUME_NAME:-${VOLUME_NAME}-sstate}"
+
+    if ! ${CONTAINER_CMD} volume inspect "$sstate_volume" >/dev/null 2>&1; then
+        echo "Creating sstate volume: $sstate_volume"
+        ${CONTAINER_CMD} volume create "$sstate_volume" >/dev/null 2>&1 || {
+            echo "ERROR: Failed to create sstate volume: $sstate_volume" >&2
+            return 1
+        }
+    fi
+
+    # Fast path: skip container startup if already initialized
+    local check_result
+    check_result=$(${CONTAINER_CMD} run --rm \
+        -v "${sstate_volume}:/sstate-cache" \
+        alpine:latest sh -c \
+        'test -f /sstate-cache/.initialized && echo "initialized" || echo "empty"' \
+        2>/dev/null || echo "empty")
+
+    if [[ "$check_result" == "initialized" ]]; then
+        echo "Sstate volume already initialized, skipping setup"
+    else
+        echo "Initializing sstate volume structure..."
+        ${CONTAINER_CMD} run --rm -u root \
+            -v "${sstate_volume}:/sstate-cache" \
+            alpine:latest sh -c "
+                chown -R ${WORKDIR_UID}:${WORKDIR_GID} /sstate-cache
+                chmod -R u+rwX,g+rwX /sstate-cache
+                touch /sstate-cache/.initialized
+                echo 'Sstate volume initialized'
             "
     fi
 }

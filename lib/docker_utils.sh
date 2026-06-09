@@ -108,19 +108,26 @@ _run_docker() {
         --rm
         -v "${PROJECT_TOP}:${WORKSPACE_PATH}${VOLUME_FLAGS}"
         -v "${VOLUME_NAME}_workdir:/workdir${WORKDIR_FLAGS}"
+        -v "${SSTATE_VOLUME_NAME:-${VOLUME_NAME}-sstate}:/sstate-cache${WORKDIR_FLAGS}"
         -v "${SSH_PATH}:/home/vari/.ssh${VOLUME_FLAGS}"
         -w "${WORKSPACE_PATH}"
     )
 
     # Pass build-path overrides into the container when set on the host.
     # Values must be container-visible paths (e.g. /workdir/... or /workspace/...).
-    for _var in DL_DIR SSTATE_DIR TMPDIR; do
+    # Defaults point to the shared sstate volume mounts above; callers may override
+    # SSTATE_DIR or DL_DIR but should never override TMPDIR (must stay in workdir).
+    local _sstate_dir="${SSTATE_DIR:-/sstate-cache}"
+    local _dl_dir="${DL_DIR:-/workdir/downloads}"
+    docker_args+=(-e "SSTATE_DIR=${_sstate_dir}")
+    docker_args+=(-e "DL_DIR=${_dl_dir}")
+    for _var in TMPDIR; do
         # Use eval for indirect expansion — portable across bash and zsh
         # (${!_var} is bash-only and breaks when this file is sourced in zsh)
         eval "_val=\"\${${_var}:-}\""
         [ -n "$_val" ] && docker_args+=(-e "${_var}=${_val}")
     done
-    unset _val
+    unset _val _sstate_dir _dl_dir
     unset _var
 
     # Forward the host SSH agent socket so the container can use already-loaded keys

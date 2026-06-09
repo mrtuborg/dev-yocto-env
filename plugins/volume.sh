@@ -12,6 +12,7 @@ volume_init() {
 volume() {
     local COMMAND="${1:-info}"
     local WORKDIR_VOLUME="${VOLUME_NAME}_workdir"
+    local SSTATE_VOLUME="${SSTATE_VOLUME_NAME:-${VOLUME_NAME}_sstate}"
 
     _load_default_exports || return 1
 
@@ -37,6 +38,7 @@ volume() {
     info)
         echo "🗄️  Project: ${PROJECT_NAME}"
         echo "📦 Workdir volume: ${WORKDIR_VOLUME}"
+        echo "📦 Sstate volume:  ${SSTATE_VOLUME}"
         echo ""
         echo "All volumes for this project:"
         ${CONTAINER_CMD} volume ls --format "{{.Name}}" 2>/dev/null \
