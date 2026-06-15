@@ -27,7 +27,7 @@ VOLUME_NAME=${PROJECT_NAME}-${ENV_ARCH}
 # Honour SSTATE_VOLUME_NAME if already set in the environment (e.g. by CI to
 # point all branches at a single shared sstate volume). Only compute the
 # default from PROJECT_NAME when it has not been set by the caller.
-SSTATE_VOLUME_NAME=${SSTATE_VOLUME_NAME:-${PROJECT_NAME}-${ENV_ARCH}-sstate}
+SSTATE_VOLUME_NAME=${SSTATE_VOLUME_NAME:-${PROJECT_NAME}-${ENV_ARCH}_sstate}
 FILEBROWSER_PORT=9200
 DL_PORT=9210
 TOASTER_WEBUI=9090
