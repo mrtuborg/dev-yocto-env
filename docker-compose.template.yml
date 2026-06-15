@@ -15,6 +15,7 @@ services:
       - WORKDIR_GID=${WORKDIR_GID}
       - SSTATE_DIR=/sstate-cache
       - DL_DIR=/workdir/downloads
+      - TMPDIR=/workdir/tmp
     command: /bin/bash
 
   filebrowser:
