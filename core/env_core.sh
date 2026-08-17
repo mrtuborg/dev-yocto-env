@@ -133,7 +133,13 @@ _initialize_workdir() {
 # DL_DIR stays in the workdir (/workdir/downloads) since downloads are
 # URL-addressed and immutable — safe to keep per-branch.
 _initialize_sstate_volume() {
-    local sstate_volume="${SSTATE_VOLUME_NAME:-${VOLUME_NAME}-sstate}"
+    # config.sh (sourced before this runs) always sets SSTATE_VOLUME_NAME,
+    # so this is just a defensive fallback, not the normal path. Previously
+    # this used "${VOLUME_NAME}-sstate" (hyphen) while config.sh's own
+    # default used "..._sstate" (underscore) — harmless only by coincidence
+    # since the two computations used to be equivalent; kept aligned now
+    # that VOLUME_NAME and SSTATE_VOLUME_NAME are derived independently.
+    local sstate_volume="${SSTATE_VOLUME_NAME:-${VOLUME_NAME}_sstate}"
 
     if ! ${CONTAINER_CMD} volume inspect "$sstate_volume" >/dev/null 2>&1; then
         echo "Creating sstate volume: $sstate_volume"
