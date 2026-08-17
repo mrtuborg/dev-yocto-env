@@ -20,16 +20,18 @@ _load_poky_exports() {
 }
 
 # Guard against concurrent sessions and clean up stale BitBake server files.
-# - If a container for THIS project's workdir volume is already running → abort.
+# - If the build container for THIS project is already running → abort.
 # - If no container is running but lock/socket files exist → they are stale, remove them.
-# The guard is scoped by Docker volume name (derived from the project directory)
-# so that parallel builds for different hardware (hw1/hw2) on the same Docker host
-# don't interfere with each other.
+# The guard is scoped by container name (${PROJECT_NAME}_poky) rather than by
+# workdir volume: filebrowser, rpm-host and nfs-server all mount the same
+# ${VOLUME_NAME}_workdir volume as long-lived sidecar services, so filtering
+# on the volume alone falsely reported "session already active" whenever one
+# of those unrelated services was running, even with no active build.
 _bb_session_guard() {
     local build_dir="${PROJECT_TOP}/${1}"
 
     local running_container
-    running_container=$(${CONTAINER_CMD} ps --filter "volume=${VOLUME_NAME}_workdir" --format '{{.Names}}' 2>/dev/null | head -1)
+    running_container=$(${CONTAINER_CMD} ps --filter "name=^${PROJECT_NAME}_poky$" --format '{{.Names}}' 2>/dev/null | head -1)
 
     if [ -n "${running_container}" ]; then
         echo "ERROR: A poky session is already active (container: ${running_container})" >&2
