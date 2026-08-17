@@ -10,7 +10,18 @@
 ENV_ARCH=${1:-${ENV_ARCH:-$(uname -m)}}
 
 # Define Docker registry and image settings
-DOCKER_REGISTRY=your-registry.azurecr.io
+#
+# DOCKER_REGISTRY is deployment-specific (it names a private registry that
+# hosts the pre-built poky-vde image) and therefore does not belong in this
+# public repo. Consumers must export it before sourcing this script (e.g.
+# from their own init.sh or a project-level env wrapper, which is the
+# natural source of truth for which registry they pull/push from). There is
+# no safe public default, so an unset value is a loud error rather than a
+# silent fallback to some guessed-at registry.
+if [[ -z "${DOCKER_REGISTRY:-}" ]]; then
+    echo "ERROR: DOCKER_REGISTRY is not set. Export it before sourcing this script (e.g. from your project's init.sh)." >&2
+    return 1 2>/dev/null || exit 1
+fi
 YOCTO_RELEASE=kirkstone
 VDE_VERSION=22.04
 VDE_IMAGE=poky-vde

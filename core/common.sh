@@ -46,10 +46,16 @@ _load_default_exports() {
     YOCTO_RELEASE=kirkstone
     VDE_VERSION=22.04
     VDE_IMAGE=poky-vde
-    DOCKER_REGISTRY=your-registry.azurecr.io
+    # DOCKER_REGISTRY is deployment-specific and must already have been set
+    # (and validated) by config.sh before this function runs — do not
+    # re-hardcode a private registry here. See config.sh for the rationale.
+    if [[ -z "${DOCKER_REGISTRY:-}" ]]; then
+        echo "ERROR: DOCKER_REGISTRY is not set. Export it before sourcing this script (e.g. from your project's init.sh)." >&2
+        return 1
+    fi
 
     POKY_IMAGE=${DOCKER_REGISTRY}/${VDE_IMAGE}:${YOCTO_RELEASE}-${VDE_VERSION}
-    NETBOOT_SERVER_IMAGE=your-registry.azurecr.io/netboot-server:latest
+    NETBOOT_SERVER_IMAGE=${DOCKER_REGISTRY}/netboot-server:latest
 
     PROJECT_TOP=$(git rev-parse --show-toplevel)
     PROJECT_NAME=$(basename ${PROJECT_TOP} | tr '.' '-' | tr '[:upper:]' '[:lower:]')
