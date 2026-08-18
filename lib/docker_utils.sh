@@ -104,7 +104,13 @@ _run_docker() {
 
     # Prepare docker arguments
     local docker_args=(
-        -u vari
+        -u "${WORKDIR_UID}:${WORKDIR_GID}"
+        # Running as a numeric UID:GID (to match the host, for bind-mount
+        # write access) means the container has no matching /etc/passwd
+        # entry, so Docker can't auto-derive HOME from it. Force HOME back
+        # to /home/vari explicitly so the git-credentials/.gitconfig mounts
+        # below (and BitBake's HOME expectations) keep working.
+        -e HOME=/home/vari
         --rm
         -v "${PROJECT_TOP}:${WORKSPACE_PATH}${VOLUME_FLAGS}"
         -v "${VOLUME_NAME}_workdir:/workdir${WORKDIR_FLAGS}"
