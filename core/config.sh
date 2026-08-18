@@ -140,7 +140,19 @@ _compute_volume_names() {
     # and must get the identical value here rather than a second,
     # independently-computed one). Only compute the default when the caller
     # hasn't already set it.
-    VOLUME_NAME=${VOLUME_NAME:-${PROJECT_PATH_KEY}-${GIT_BRANCH}-${ENV_ARCH}}
+    #
+    # Skip re-appending GIT_BRANCH when PROJECT_NAME already contains it
+    # (e.g. CI checkout directories are often already named per-branch, like
+    # "myproject-feature-foo") — otherwise the branch ends up encoded twice
+    # in VOLUME_NAME for no benefit. Local dev checkouts, whose directory
+    # name is normally branch-independent, are unaffected and still get
+    # GIT_BRANCH folded in so switching branches in place gets a fresh
+    # workdir (see comment above).
+    if [[ -n "$GIT_BRANCH" && "$GIT_BRANCH" != "unknown-branch" && "$PROJECT_NAME" == *"$GIT_BRANCH"* ]]; then
+        VOLUME_NAME=${VOLUME_NAME:-${PROJECT_PATH_KEY}-${ENV_ARCH}}
+    else
+        VOLUME_NAME=${VOLUME_NAME:-${PROJECT_PATH_KEY}-${GIT_BRANCH}-${ENV_ARCH}}
+    fi
     [[ -z "$VOLUME_NAME" ]] && VOLUME_NAME="${PROJECT_NAME}-${ENV_ARCH}"
     SSTATE_VOLUME_NAME=${SSTATE_VOLUME_NAME:-${PROJECT_REPO_KEY}-${YOCTO_RELEASE}-${ENV_ARCH}_sstate}
     [[ -z "$SSTATE_VOLUME_NAME" ]] && SSTATE_VOLUME_NAME="${PROJECT_REPO_KEY}-${YOCTO_RELEASE}-${ENV_ARCH}_sstate"
