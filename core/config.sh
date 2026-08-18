@@ -91,45 +91,65 @@ _hash_string() {
 # the same local checkout gets a fresh workdir instead of silently reusing
 # stale build state from a different branch (a real class of bug — see
 # "version going backwards" style staleness issues).
-PROJECT_PARENT_HASH=$(_hash_string "$(dirname "${PROJECT_TOP}")")
-[[ -z "$PROJECT_PARENT_HASH" ]] && PROJECT_PARENT_HASH="nohash"
+#
+# This is a function (not inline top-level code) so it can be called again
+# later to RE-derive VOLUME_NAME/SSTATE_VOLUME_NAME. common.sh's
+# _load_default_exports() calls this every time it runs — which happens not
+# just at initial env setup but on every subsequent plugin invocation (poky,
+# volume, cleanup, filebrowser, rpm_host), several of which unset VOLUME_NAME
+# via _unload_default_exports when they finish. Without re-deriving it the
+# same way here, those later calls would either silently regress to a
+# different (stale/incorrect) formula or leave VOLUME_NAME unset entirely.
+# Keeping this logic in one function is what makes config.sh authoritative.
+_compute_volume_names() {
+    PROJECT_PARENT_HASH=$(_hash_string "$(dirname "${PROJECT_TOP}")")
+    [[ -z "$PROJECT_PARENT_HASH" ]] && PROJECT_PARENT_HASH="nohash"
 
-GIT_REMOTE_URL=$(git remote get-url origin 2>/dev/null)
-[[ -z "$GIT_REMOTE_URL" ]] && GIT_REMOTE_URL="local-${PROJECT_NAME}"
-PROJECT_REMOTE_HASH=$(_hash_string "$GIT_REMOTE_URL")
-[[ -z "$PROJECT_REMOTE_HASH" ]] && PROJECT_REMOTE_HASH="nohash"
+    GIT_REMOTE_URL=$(git remote get-url origin 2>/dev/null)
+    [[ -z "$GIT_REMOTE_URL" ]] && GIT_REMOTE_URL="local-${PROJECT_NAME}"
+    PROJECT_REMOTE_HASH=$(_hash_string "$GIT_REMOTE_URL")
+    [[ -z "$PROJECT_REMOTE_HASH" ]] && PROJECT_REMOTE_HASH="nohash"
 
-PROJECT_PATH_KEY="${PROJECT_NAME}-${PROJECT_PARENT_HASH}"
-PROJECT_REPO_KEY="${PROJECT_NAME}-${PROJECT_REMOTE_HASH}"
+    PROJECT_PATH_KEY="${PROJECT_NAME}-${PROJECT_PARENT_HASH}"
+    PROJECT_REPO_KEY="${PROJECT_NAME}-${PROJECT_REMOTE_HASH}"
 
-# Branch: prefer CI-provided context (GitHub Actions sets GITHUB_HEAD_REF for
-# PR builds and GITHUB_REF_NAME for push/tag builds automatically — no
-# workflow changes needed to use them; other CI systems' equivalents could be
-# added the same way). This matters because a checked-out PR is normally in
-# detached HEAD state, where plain git commands can't recover the logical
-# branch name. Falls back to real git state for local dev, where HEAD is
-# normally a real branch, not detached.
-GIT_BRANCH="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME:-}}"
-if [[ -z "$GIT_BRANCH" ]]; then
-    GIT_BRANCH=$(git symbolic-ref --short HEAD 2>/dev/null)
-fi
-if [[ -z "$GIT_BRANCH" ]]; then
-    GIT_BRANCH="detached-$(git rev-parse --short HEAD 2>/dev/null)"
-fi
-# Sanitize for use in a Docker volume name: lowercase, replace anything
-# outside [a-z0-9_.-] with '-' (branch names like "feature/foo" contain '/',
-# which Docker volume names don't allow).
-GIT_BRANCH=$(printf '%s' "$GIT_BRANCH" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9_.-' '-')
-[[ -z "$GIT_BRANCH" || "$GIT_BRANCH" == "detached-" ]] && GIT_BRANCH="unknown-branch"
+    # Branch: prefer CI-provided context (GitHub Actions sets GITHUB_HEAD_REF
+    # for PR builds and GITHUB_REF_NAME for push/tag builds automatically —
+    # no workflow changes needed to use them; other CI systems' equivalents
+    # could be added the same way). This matters because a checked-out PR is
+    # normally in detached HEAD state, where plain git commands can't recover
+    # the logical branch name. Falls back to real git state for local dev,
+    # where HEAD is normally a real branch, not detached.
+    GIT_BRANCH="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME:-}}"
+    if [[ -z "$GIT_BRANCH" ]]; then
+        GIT_BRANCH=$(git symbolic-ref --short HEAD 2>/dev/null)
+    fi
+    if [[ -z "$GIT_BRANCH" ]]; then
+        GIT_BRANCH="detached-$(git rev-parse --short HEAD 2>/dev/null)"
+    fi
+    # Sanitize for use in a Docker volume name: lowercase, replace anything
+    # outside [a-z0-9_.-] with '-' (branch names like "feature/foo" contain
+    # '/', which Docker volume names don't allow).
+    GIT_BRANCH=$(printf '%s' "$GIT_BRANCH" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9_.-' '-')
+    [[ -z "$GIT_BRANCH" || "$GIT_BRANCH" == "detached-" ]] && GIT_BRANCH="unknown-branch"
 
-# Define volume and port settings
-VOLUME_NAME="${PROJECT_PATH_KEY}-${GIT_BRANCH}-${ENV_ARCH}"
-[[ -z "$VOLUME_NAME" ]] && VOLUME_NAME="${PROJECT_NAME}-${ENV_ARCH}"
-# Honour SSTATE_VOLUME_NAME if already set in the environment (e.g. by CI to
-# point multiple checkouts/branches/runners at a single shared sstate
-# volume). Only compute the default when it has not been set by the caller.
-SSTATE_VOLUME_NAME=${SSTATE_VOLUME_NAME:-${PROJECT_REPO_KEY}-${YOCTO_RELEASE}-${ENV_ARCH}_sstate}
-[[ -z "$SSTATE_VOLUME_NAME" ]] && SSTATE_VOLUME_NAME="${PROJECT_REPO_KEY}-${YOCTO_RELEASE}-${ENV_ARCH}_sstate"
+    # Define volume and port settings
+    VOLUME_NAME="${PROJECT_PATH_KEY}-${GIT_BRANCH}-${ENV_ARCH}"
+    [[ -z "$VOLUME_NAME" ]] && VOLUME_NAME="${PROJECT_NAME}-${ENV_ARCH}"
+    # Honour SSTATE_VOLUME_NAME if already set in the environment (e.g. by CI
+    # to point multiple checkouts/branches/runners at a single shared sstate
+    # volume). Only compute the default when it has not been set by the
+    # caller.
+    SSTATE_VOLUME_NAME=${SSTATE_VOLUME_NAME:-${PROJECT_REPO_KEY}-${YOCTO_RELEASE}-${ENV_ARCH}_sstate}
+    [[ -z "$SSTATE_VOLUME_NAME" ]] && SSTATE_VOLUME_NAME="${PROJECT_REPO_KEY}-${YOCTO_RELEASE}-${ENV_ARCH}_sstate"
+
+    _validate_volume_name "$VOLUME_NAME" "VOLUME_NAME" || return 1
+    _validate_volume_name "$SSTATE_VOLUME_NAME" "SSTATE_VOLUME_NAME" || return 1
+
+    export VOLUME_NAME
+    export SSTATE_VOLUME_NAME
+    return 0
+}
 
 # Final sanity check: reject anything that could produce a malformed or
 # rejected Docker volume name (an empty component collapsing into a double
@@ -147,8 +167,7 @@ _validate_volume_name() {
     fi
     return 0
 }
-_validate_volume_name "$VOLUME_NAME" "VOLUME_NAME" || return 1 2>/dev/null || exit 1
-_validate_volume_name "$SSTATE_VOLUME_NAME" "SSTATE_VOLUME_NAME" || return 1 2>/dev/null || exit 1
+_compute_volume_names || return 1 2>/dev/null || exit 1
 
 FILEBROWSER_PORT=9200
 DL_PORT=9210
