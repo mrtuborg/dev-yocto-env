@@ -103,6 +103,17 @@ _run_docker() {
     fi
 
     # Prepare docker arguments
+    #
+    # /home/vari in the image is owned by whatever USER_ID/USER_GID it was
+    # built with (1000 by default) — not necessarily WORKDIR_UID:WORKDIR_GID
+    # (the host's real UID:GID, used for -u above). BitBake and other tools
+    # need to write into $HOME (e.g. sanity-checker's .netrc probe), so bind
+    # a host-side scratch directory over /home/vari: it's created below via
+    # a plain host `mkdir -p`, inheriting the invoking (host) user's
+    # ownership, which always matches WORKDIR_UID:WORKDIR_GID.
+    local HOME_DIR="${PROJECT_TOP}/${POKY_TMP_DIR}/home"
+    mkdir -p "$HOME_DIR"
+
     local docker_args=(
         -u "${WORKDIR_UID}:${WORKDIR_GID}"
         # Running as a numeric UID:GID (to match the host, for bind-mount
@@ -115,6 +126,7 @@ _run_docker() {
         -v "${PROJECT_TOP}:${WORKSPACE_PATH}${VOLUME_FLAGS}"
         -v "${VOLUME_NAME}_workdir:/workdir${WORKDIR_FLAGS}"
         -v "${SSTATE_VOLUME_NAME:-${VOLUME_NAME}_sstate}:/sstate-cache${WORKDIR_FLAGS}"
+        -v "${HOME_DIR}:/home/vari${VOLUME_FLAGS}"
         -v "${SSH_PATH}:/home/vari/.ssh${VOLUME_FLAGS}"
         -w "${WORKSPACE_PATH}"
     )
