@@ -62,7 +62,17 @@ _load_default_exports() {
     POKY_TMP_DIR=poky_tmp
     WORKSPACE_PATH=/workspace
 
-    VOLUME_NAME=${PROJECT_NAME}-${ENV_ARCH}
+    # VOLUME_NAME/SSTATE_VOLUME_NAME must use the SAME collision-safe,
+    # per-checkout-location/branch hashing logic as core/config.sh — not a
+    # simpler formula re-implemented here. This function is called (again)
+    # on every plugin invocation (poky, volume, cleanup, filebrowser,
+    # rpm_host), several of which unset VOLUME_NAME via
+    # _unload_default_exports when they finish, so re-deriving it here with
+    # the wrong formula would silently make config.sh's naming dead code.
+    # _compute_volume_names is defined by config.sh, which always runs
+    # before this function can be called (see core/env_core.sh).
+    _compute_volume_names || return 1
+
     FILEBROWSER_PORT=9200
     DL_PORT=9210
 
