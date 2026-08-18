@@ -133,13 +133,15 @@ _compute_volume_names() {
     GIT_BRANCH=$(printf '%s' "$GIT_BRANCH" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9_.-' '-')
     [[ -z "$GIT_BRANCH" || "$GIT_BRANCH" == "detached-" ]] && GIT_BRANCH="unknown-branch"
 
-    # Define volume and port settings
-    VOLUME_NAME="${PROJECT_PATH_KEY}-${GIT_BRANCH}-${ENV_ARCH}"
+    # Define volume and port settings.
+    # Honour VOLUME_NAME/SSTATE_VOLUME_NAME if already set in the environment
+    # (e.g. by CI, which needs the exact volume name available BEFORE this is
+    # sourced — to name a host build directory, register cleanup jobs, etc. —
+    # and must get the identical value here rather than a second,
+    # independently-computed one). Only compute the default when the caller
+    # hasn't already set it.
+    VOLUME_NAME=${VOLUME_NAME:-${PROJECT_PATH_KEY}-${GIT_BRANCH}-${ENV_ARCH}}
     [[ -z "$VOLUME_NAME" ]] && VOLUME_NAME="${PROJECT_NAME}-${ENV_ARCH}"
-    # Honour SSTATE_VOLUME_NAME if already set in the environment (e.g. by CI
-    # to point multiple checkouts/branches/runners at a single shared sstate
-    # volume). Only compute the default when it has not been set by the
-    # caller.
     SSTATE_VOLUME_NAME=${SSTATE_VOLUME_NAME:-${PROJECT_REPO_KEY}-${YOCTO_RELEASE}-${ENV_ARCH}_sstate}
     [[ -z "$SSTATE_VOLUME_NAME" ]] && SSTATE_VOLUME_NAME="${PROJECT_REPO_KEY}-${YOCTO_RELEASE}-${ENV_ARCH}_sstate"
 
