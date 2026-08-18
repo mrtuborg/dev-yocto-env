@@ -177,10 +177,15 @@ TOASTER_WEBUI=9090
 WORKDIR_UID=1000
 WORKDIR_GID=1000
 
-# Redefine WORKDIR_UID and WORKDIR_GID only if on a Linux machine
+# Redefine WORKDIR_UID and WORKDIR_GID only if on a Linux machine.
+# Use `id -u`/`id -g` with no argument (current process) rather than
+# `id -u $USER` — $USER is frequently unset or stale under non-interactive
+# invocations (e.g. a systemd-managed CI runner service), which would
+# silently resolve to the wrong UID/GID and break write access to
+# bind-mounted host directories inside the container.
 if [[ "$(uname -s)" == "Linux" ]]; then
-    WORKDIR_UID=$(id -u $USER)
-    WORKDIR_GID=$(id -g $USER)
+    WORKDIR_UID=$(id -u)
+    WORKDIR_GID=$(id -g)
 fi
 
 # Determine SSH path based on OS
