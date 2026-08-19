@@ -2,7 +2,7 @@ services:
   vde:
     build:
       dockerfile: Dockerfile_22.04
-      context: ./poky-vde
+      context: ./docker-yocto-env
       args:
         USER_ID: ${WORKDIR_UID}
         USER_GID: ${WORKDIR_GID}
@@ -57,7 +57,7 @@ services:
     ports:
       - ${DL_PORT}:80
     volumes:
-      - workdir:/var/www/html/yocto
+      - workdir:/usr/local/apache2/htdocs/yocto
     depends_on:
       - vde
 
