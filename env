@@ -34,16 +34,20 @@ else
 fi
 
 # Currently for the simplicity, we are using the VDE image for toaster
-# TOASTER_IMAGE=your-registry.azurecr.io/toaster:${PROJECT_VER}
+# TOASTER_IMAGE=${DOCKER_REGISTRY}/toaster:${PROJECT_VER}
 
 _load_default_exports() {
     YOCTO_RELEASE=kirkstone
     VDE_VERSION=22.04
     VDE_IMAGE=poky-vde
-    DOCKER_REGISTRY=your-registry.azurecr.io
+    # Honor a pre-exported DOCKER_REGISTRY (e.g. set in the caller's shell
+    # profile or CI environment); fall back to the placeholder so the public
+    # repo is self-documenting and docker pull fails with a clear hostname
+    # rather than silently using the wrong registry.
+    DOCKER_REGISTRY=${DOCKER_REGISTRY:-your-registry.azurecr.io}
 
     POKY_IMAGE=${DOCKER_REGISTRY}/${VDE_IMAGE}:${YOCTO_RELEASE}-${VDE_VERSION}
-    NETBOOT_SERVER_IMAGE=your-registry.azurecr.io/netboot-server:latest
+    NETBOOT_SERVER_IMAGE=${DOCKER_REGISTRY}/netboot-server:latest
 
     PROJECT_TOP=$(git rev-parse --show-toplevel)
     PROJECT_NAME=$(basename ${PROJECT_TOP} | tr '.' '-')
