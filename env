@@ -155,7 +155,7 @@ _poky_dock_cmd() {
     )
 
     # imagename=`docker compose -f docker-compose.x86_64.yml config --images | grep -w poky-vde`
-    docker run "${docker_args[@]}" 
+    docker run --network host "${docker_args[@]}"
     return $?
 }
 
