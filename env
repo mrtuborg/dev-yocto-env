@@ -143,12 +143,20 @@ _poky_dock_cmd() {
     local BUILDPLATFORM="${1}"
     local COMMAND_TO_RUN="${2}"
 
+    # Use Git credential.helper to manage https authentication
+    # and utilize Yocto fetcher feature to fallback from SSH to HTTPS
+    local _gitcfg="${PROJECT_TOP}/${POKY_TMP_DIR}/.gitconfig-docker"
+    mkdir -p "${PROJECT_TOP}/${POKY_TMP_DIR}"
+    printf '[credential]\n\thelper = store\n' > "$_gitcfg"
+
     local docker_args=(
         -u vari
         --rm
         -v ${PROJECT_TOP}:${WORKSPACE_PATH}
         -v ${VOLUME_NAME}_workdir:/workdir
         -v /home/$USER/.ssh:/home/vari/.ssh
+        -v "/home/$USER/.git-credentials:/home/vari/.git-credentials:ro"
+        -v "${_gitcfg}:/home/vari/.gitconfig:ro"
         -w ${WORKSPACE_PATH}
         ${POKY_IMAGE}
         /bin/bash -c "${COMMAND_TO_RUN}"
