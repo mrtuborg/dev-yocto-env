@@ -10,6 +10,7 @@ services:
         POKY_COMMIT_ID: 6505459809380ddcf152a09343e4dc55038de332
     image: "${POKY_IMAGE}"
     platform: linux/${ENV_ARCH}
+    network_mode: "host"
     command: [
         "/bin/sh",
         "-c",
