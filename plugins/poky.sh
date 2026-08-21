@@ -80,7 +80,7 @@ poky() {
                             source ${BUILD_DIR}/apply_passthrough.sh; \
                             source ${POKY_ENVIRONMENT}"
     elif [ -n "${BUILD_DIR}" ]; then
-        POKY_ENVIRONMENT="source ${BUILD_DIR}/apply_passthrough.sh; \
+        POKY_ENVIRONMENT="${BUILD_DIR}/apply_passthrough.sh; \
                             source ${POKY_ENVIRONMENT}"
     fi
 
