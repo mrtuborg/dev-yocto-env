@@ -126,6 +126,11 @@ _run_docker() {
         -v "${PROJECT_TOP}:${WORKSPACE_PATH}${VOLUME_FLAGS}"
         -v "${VOLUME_NAME}_workdir:/workdir${WORKDIR_FLAGS}"
         -v "${SSTATE_VOLUME_NAME:-${VOLUME_NAME}_sstate}:/sstate-cache${WORKDIR_FLAGS}"
+        # DL_DIR: shared repo+release-scoped volume, mounted NESTED inside
+        # /workdir. Docker layers it over that subpath, so /workdir/downloads
+        # resolves to the shared volume while the rest of /workdir stays
+        # private to this checkout. See config.sh's "Volume naming" comment.
+        -v "${DL_VOLUME_NAME:-${VOLUME_NAME}_downloads}:/workdir/downloads${WORKDIR_FLAGS}"
         -v "${HOME_DIR}:/home/vari${VOLUME_FLAGS}"
         -v "${SSH_PATH}:/home/vari/.ssh${VOLUME_FLAGS}"
         -w "${WORKSPACE_PATH}"
