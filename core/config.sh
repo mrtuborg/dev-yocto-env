@@ -202,12 +202,32 @@ if [[ "$(uname -s)" == "Linux" ]]; then
     WORKDIR_GID=$(id -g)
 fi
 
-# Determine SSH path based on OS
-if [[ "$(uname -s)" == "Linux" ]]; then
-    SSH_PATH="/home/$USER/.ssh"
-else
-    SSH_PATH="/Users/$USER/.ssh"
-fi
+# Resolve the invoking user's home directory from the passwd database.
+#
+# $USER is frequently unset or stale under non-interactive invocations (e.g. a
+# systemd-managed CI runner service) — the same trap that made `id -u $USER`
+# unreliable above. Deriving "/home/$USER/.ssh" from it silently yields
+# "/home/.ssh", which Docker then creates as an empty directory and mounts over
+# the container's ~/.ssh, breaking every SSH-authenticated git fetch with
+# "Permission denied (publickey)".
+_host_home_dir() {
+    local user_name home_dir=""
+    user_name="$(id -un 2>/dev/null)"
+
+    if command -v getent >/dev/null 2>&1; then
+        home_dir="$(getent passwd "$(id -u)" 2>/dev/null | cut -d: -f6)"
+    elif [[ "$(uname -s)" == "Darwin" ]] && command -v dscl >/dev/null 2>&1; then
+        home_dir="$(dscl . -read "/Users/${user_name}" NFSHomeDirectory 2>/dev/null | awk '{print $2}')"
+    fi
+
+    if [[ -z "${home_dir}" ]] || [[ ! -d "${home_dir}" ]]; then
+        home_dir="${HOME}"
+    fi
+
+    printf '%s\n' "${home_dir}"
+}
+
+SSH_PATH="$(_host_home_dir)/.ssh"
 
 # Directory exclusion variables for info commands
 MACHINES_EXCLUDE_DIRS=${MACHINES_EXCLUDE_DIRS:-"sources"}
