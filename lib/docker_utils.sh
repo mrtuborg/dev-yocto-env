@@ -46,6 +46,82 @@ _generate_compose_file() {
     return 0
 }
 
+# Build /etc/passwd and /etc/group overrides so the container's numeric
+# UID:GID always resolves to a real account.
+#
+# _run_docker() runs the container as the host's UID:GID so bind-mounted writes
+# work on Linux, where mount permission checks are UID-based. The image, though,
+# bakes 'vari' at whatever USER_ID/USER_GID it was built with (1000 by default),
+# so any other UID has no /etc/passwd entry. glibc's getpwuid() then fails and
+# OpenSSH aborts with "No user exists for uid <N>", breaking every git-over-SSH
+# fetch BitBake performs while resolving SRCREV/AUTOREV. Exporting HOME does not
+# help: ssh calls getpwuid() directly, independently of $HOME.
+#
+# Applied on every platform, not just Linux: the UID the container runs as and
+# the UID baked into the image are set independently, so they can disagree
+# anywhere. Where they already agree this is a no-op.
+#
+# The override is derived from the image's own /etc/passwd so the system
+# accounts the Yocto build relies on (root, nobody, ...) are preserved — a
+# hand-written minimal file would drop them and break pseudo/do_rootfs.
+_prepare_container_identity() {
+    _CONTAINER_PASSWD_FILE=""
+    _CONTAINER_GROUP_FILE=""
+
+    # uid 0 always resolves: every image ships a root entry.
+    if [[ "${WORKDIR_UID}" == "0" ]]; then
+        return 0
+    fi
+
+    # Must live under PROJECT_TOP: it is the path shared into the container
+    # runtime's VM on macOS (colima/Lima/Docker Desktop). A host-only path such
+    # as /tmp does not exist inside that VM, and the bind mount fails outright.
+    local cache_dir="${PROJECT_TOP}/${POKY_TMP_DIR}"
+    mkdir -p "${cache_dir}" || return 1
+
+    local image_passwd="${cache_dir}/.image-passwd"
+    local image_group="${cache_dir}/.image-group"
+    local image_stamp="${cache_dir}/.image-id"
+
+    local image_id
+    image_id=$(${CONTAINER_CMD} image inspect -f '{{.Id}}' "${POKY_IMAGE}" 2>/dev/null)
+
+    # Re-extract only when the image changed, so repeated bitbake invocations
+    # don't each pay for an extra container start.
+    if [[ -z "${image_id}" ]] || [[ ! -s "${image_passwd}" ]] || [[ ! -s "${image_group}" ]] \
+       || [[ "$(cat "${image_stamp}" 2>/dev/null)" != "${image_id}" ]]; then
+        ${CONTAINER_CMD} run --rm --entrypoint cat "${POKY_IMAGE}" /etc/passwd > "${image_passwd}" 2>/dev/null
+        ${CONTAINER_CMD} run --rm --entrypoint cat "${POKY_IMAGE}" /etc/group  > "${image_group}"  2>/dev/null
+
+        if [[ ! -s "${image_passwd}" ]] || [[ ! -s "${image_group}" ]]; then
+            echo "WARNING: could not read /etc/passwd from ${POKY_IMAGE}; using a minimal fallback" >&2
+            printf 'root:x:0:0:root:/root:/bin/bash\nnobody:x:65534:65534:nobody:/nonexistent:/usr/sbin/nologin\n' > "${image_passwd}"
+            printf 'root:x:0:\nnobody:x:65534:\n' > "${image_group}"
+        fi
+
+        ${CONTAINER_CMD} image inspect -f '{{.Id}}' "${POKY_IMAGE}" > "${image_stamp}" 2>/dev/null || : > "${image_stamp}"
+    fi
+
+    local out_passwd="${cache_dir}/.container-passwd"
+    local out_group="${cache_dir}/.container-group"
+
+    # Drop the image's own 'vari' entry plus anything already occupying the
+    # target UID/GID (getpwuid returns the first match, so a duplicate would
+    # win and hand back the wrong home), then re-add 'vari' at the UID:GID the
+    # container actually runs as. Keeping the name and the /home/vari home path
+    # preserves the HOME export and the ~/.ssh, .gitconfig and .git-credentials
+    # mounts set up below.
+    awk -F: -v uid="${WORKDIR_UID}" '$1 != "vari" && $3 != uid' "${image_passwd}" > "${out_passwd}" || return 1
+    printf 'vari:x:%s:%s:vari:/home/vari:/bin/bash\n' "${WORKDIR_UID}" "${WORKDIR_GID}" >> "${out_passwd}"
+
+    awk -F: -v gid="${WORKDIR_GID}" '$1 != "vari" && $3 != gid' "${image_group}" > "${out_group}" || return 1
+    printf 'vari:x:%s:\n' "${WORKDIR_GID}" >> "${out_group}"
+
+    _CONTAINER_PASSWD_FILE="${out_passwd}"
+    _CONTAINER_GROUP_FILE="${out_group}"
+    return 0
+}
+
 # Common docker execution function
 _run_docker() {
     local interactive="$1"
@@ -110,6 +186,8 @@ _run_docker() {
     local HOME_DIR="${PROJECT_TOP}/${POKY_TMP_DIR}/home"
     mkdir -p "$HOME_DIR"
 
+    _prepare_container_identity || return 1
+
     local docker_args=(
         -u "${WORKDIR_UID}:${WORKDIR_GID}"
         # Running as a numeric UID:GID (to match the host, for bind-mount
@@ -126,6 +204,13 @@ _run_docker() {
         -v "${SSH_PATH}:/home/vari/.ssh${VOLUME_FLAGS}"
         -w "${WORKSPACE_PATH}"
     )
+
+    # Give the container's numeric UID:GID a real passwd/group entry so
+    # getpwuid() — and therefore ssh — works (see _prepare_container_identity).
+    if [[ -n "${_CONTAINER_PASSWD_FILE}" ]] && [[ -n "${_CONTAINER_GROUP_FILE}" ]]; then
+        docker_args+=(-v "${_CONTAINER_PASSWD_FILE}:/etc/passwd:ro${VOLUME_FLAGS}")
+        docker_args+=(-v "${_CONTAINER_GROUP_FILE}:/etc/group:ro${VOLUME_FLAGS}")
+    fi
 
     # SSTATE_DIR, DL_DIR, and TMPDIR are all set and passed through by
     # apply_passthrough.sh inside the container. Do not inject them via -e here
