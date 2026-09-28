@@ -86,21 +86,17 @@ _run_docker() {
         EXTRA_DOCKER_ARGS+=(--network host)
     fi
 
-    # Determine SSH path based on OS
-    local SSH_PATH
-    if [[ "$(uname -s)" == "Linux" ]]; then
-        SSH_PATH="/home/$USER/.ssh"
-    else
-        SSH_PATH="/Users/$USER/.ssh"
-    fi
+    # Resolve the invoking user's home from the passwd database rather than
+    # $USER, which is often unset under non-interactive invocations (e.g. a
+    # systemd-managed CI runner). "/home/$USER/.ssh" would then collapse to
+    # "/home/.ssh", which Docker creates as an empty directory and mounts over
+    # the container's ~/.ssh, breaking SSH-authenticated git fetches.
+    local HOST_HOME
+    HOST_HOME="$(_host_home_dir)"
+    local SSH_PATH="${HOST_HOME}/.ssh"
 
-    # Determine git-credentials path (created by CI for HTTPS auth)
-    local GIT_CREDENTIALS_PATH
-    if [[ "$(uname -s)" == "Linux" ]]; then
-        GIT_CREDENTIALS_PATH="/home/$USER/.git-credentials"
-    else
-        GIT_CREDENTIALS_PATH="/Users/$USER/.git-credentials"
-    fi
+    # git-credentials is created by CI for HTTPS auth
+    local GIT_CREDENTIALS_PATH="${HOST_HOME}/.git-credentials"
 
     # Prepare docker arguments
     #
