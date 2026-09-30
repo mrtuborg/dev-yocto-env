@@ -64,7 +64,8 @@ _initialize_environment() {
     
     # Initialize workdir if needed
     _initialize_workdir || return 1
-    _initialize_sstate_volume || return 1
+    _initialize_shared_volume "${SSTATE_VOLUME_NAME:-${VOLUME_NAME}_sstate}" sstate || return 1
+    _initialize_shared_volume "${DL_VOLUME_NAME:-${VOLUME_NAME}_downloads}" downloads || return 1
     
     # Load plugins after environment is ready
     load_plugins
@@ -117,7 +118,7 @@ _initialize_workdir() {
             -v "${volume_name}:/workdir${init_volume_flags}" \
             alpine:latest sh -c "
                 echo 'Setting up workdir structure and permissions...'
-                mkdir -p /workdir/tmp /workdir/downloads
+                mkdir -p /workdir/tmp
                 chown -R ${WORKDIR_UID}:${WORKDIR_GID} /workdir
                 chmod -R u+rwX,g+rwX /workdir
                 touch /workdir/.initialized
@@ -126,48 +127,32 @@ _initialize_workdir() {
     fi
 }
 
-# Function to initialize the shared sstate volume.
-# The volume root IS the sstate-cache directory — objects are written directly
-# to the volume root so the rpm-host can serve them at /sstate-cache/PATH
-# without any subpath complications (Docker named volumes don't support subpath mounts).
-# DL_DIR stays in the workdir (/workdir/downloads) since downloads are
-# URL-addressed and immutable — safe to keep per-branch.
-_initialize_sstate_volume() {
-    # config.sh (sourced before this runs) always sets SSTATE_VOLUME_NAME,
-    # so this is just a defensive fallback, not the normal path. Previously
-    # this used "${VOLUME_NAME}-sstate" (hyphen) while config.sh's own
-    # default used "..._sstate" (underscore) — harmless only by coincidence
-    # since the two computations used to be equivalent; kept aligned now
-    # that VOLUME_NAME and SSTATE_VOLUME_NAME are derived independently.
-    local sstate_volume="${SSTATE_VOLUME_NAME:-${VOLUME_NAME}_sstate}"
+# Create (if absent) and make writable a shared, persistent cache volume.
+#
+# Used for BOTH the sstate cache and DL_DIR. Unlike the per-checkout
+# workdir/TMPDIR volume, these are content-addressed (sstate: BitBake task
+# signatures) or URL-addressed and checksum-verified (downloads), so they are
+# safe to share across checkout locations, branches and CI runners — see the
+# "Volume naming" comment in core/config.sh.
+#
+# Each volume root IS the cache directory (objects are written directly to the
+# root, so the rpm-host can serve them at /sstate-cache/PATH with no subpath
+# mount, which Docker named volumes don't support).
+#
+# Only the volume ROOT needs chowning: BitBake owns everything it creates
+# below it. That makes this O(1) regardless of cache size, so it runs
+# unconditionally on every env load — no ".initialized" marker, no probe
+# container. That is deliberate and strictly safer than a marker: if a
+# volume's root ownership is ever clobbered, this self-heals it, whereas a
+# marker would report "already initialized" and leave the build broken.
+_initialize_shared_volume() {
+    local vol="$1" label="$2"
 
-    if ! ${CONTAINER_CMD} volume inspect "$sstate_volume" >/dev/null 2>&1; then
-        echo "Creating sstate volume: $sstate_volume"
-        ${CONTAINER_CMD} volume create "$sstate_volume" >/dev/null 2>&1 || {
-            echo "ERROR: Failed to create sstate volume: $sstate_volume" >&2
-            return 1
-        }
-    fi
+    ${CONTAINER_CMD} volume inspect "$vol" >/dev/null 2>&1 \
+        || ${CONTAINER_CMD} volume create "$vol" >/dev/null 2>&1 \
+        || { echo "ERROR: Failed to create ${label} volume: $vol" >&2; return 1; }
 
-    # Fast path: skip container startup if already initialized
-    local check_result
-    check_result=$(${CONTAINER_CMD} run --rm \
-        -v "${sstate_volume}:/sstate-cache" \
-        alpine:latest sh -c \
-        'test -f /sstate-cache/.initialized && echo "initialized" || echo "empty"' \
-        2>/dev/null || echo "empty")
-
-    if [[ "$check_result" == "initialized" ]]; then
-        echo "Sstate volume already initialized, skipping setup"
-    else
-        echo "Initializing sstate volume structure..."
-        ${CONTAINER_CMD} run --rm -u root \
-            -v "${sstate_volume}:/sstate-cache" \
-            alpine:latest sh -c "
-                chown -R ${WORKDIR_UID}:${WORKDIR_GID} /sstate-cache
-                chmod -R u+rwX,g+rwX /sstate-cache
-                touch /sstate-cache/.initialized
-                echo 'Sstate volume initialized'
-            "
-    fi
+    ${CONTAINER_CMD} run --rm -u root -v "${vol}:/v" alpine:latest \
+        chown "${WORKDIR_UID}:${WORKDIR_GID}" /v >/dev/null 2>&1 \
+        || { echo "ERROR: Failed to prepare ${label} volume: $vol" >&2; return 1; }
 }
