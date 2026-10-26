@@ -3,6 +3,10 @@
 
 # Volume management plugin
 # Backup, restore, rename, and inspect the workdir Docker volume for the current project.
+# Note: backup/restore/rename operate on the per-checkout workdir volume only.
+# The sstate and downloads volumes are shared, repo-scoped caches with their own
+# lifetime (see core/config.sh) — they are intentionally out of scope here, since
+# both are safely re-creatable and are not tied to a checkout location.
 
 volume_init() {
     register_plugin_command "volume" "volume" "Workdir volume management" \
@@ -13,6 +17,7 @@ volume() {
     local COMMAND="${1:-info}"
     local WORKDIR_VOLUME="${VOLUME_NAME}_workdir"
     local SSTATE_VOLUME="${SSTATE_VOLUME_NAME:-${VOLUME_NAME}_sstate}"
+    local DL_VOLUME="${DL_VOLUME_NAME:-${VOLUME_NAME}_downloads}"
 
     _load_default_exports || return 1
 
@@ -37,8 +42,9 @@ volume() {
     case "$COMMAND" in
     info)
         echo "🗄️  Project: ${PROJECT_NAME}"
-        echo "📦 Workdir volume: ${WORKDIR_VOLUME}"
-        echo "📦 Sstate volume:  ${SSTATE_VOLUME}"
+        echo "📦 Workdir volume:   ${WORKDIR_VOLUME}"
+        echo "📦 Sstate volume:    ${SSTATE_VOLUME}"
+        echo "📦 Downloads volume: ${DL_VOLUME} (shared across checkouts/branches — see config.sh)"
         echo ""
         echo "All volumes for this project:"
         ${CONTAINER_CMD} volume ls --format "{{.Name}}" 2>/dev/null \
@@ -50,6 +56,23 @@ volume() {
                 if _vol_in_use "$vol"; then IN_USE=" [in use]"; fi
                 echo "  ${vol} (${SIZE})${IN_USE}"
             done
+
+        # Before DL_DIR moved to its own shared volume, downloads lived at
+        # /workdir/downloads INSIDE each workdir volume. That data is now
+        # shadowed by the new mount: unreachable, but still consuming disk.
+        # Surface it here so it can be reclaimed (CI is unaffected — workdir
+        # volumes are deleted after every run).
+        if ${CONTAINER_CMD} volume inspect "$WORKDIR_VOLUME" >/dev/null 2>&1; then
+            local STALE_DL
+            STALE_DL=$(${CONTAINER_CMD} run --rm -v "${WORKDIR_VOLUME}:/vol" alpine \
+                sh -c 'du -sh /vol/downloads 2>/dev/null | awk "{print \$1}"' 2>/dev/null || true)
+            if [[ -n "$STALE_DL" && "$STALE_DL" != "0" ]]; then
+                echo ""
+                echo "⚠️  Shadowed pre-migration downloads in ${WORKDIR_VOLUME} (${STALE_DL})."
+                echo "   DL_DIR now lives in ${DL_VOLUME}; this copy is unreachable. Reclaim with:"
+                echo "   ${CONTAINER_CMD} run --rm -v ${WORKDIR_VOLUME}:/vol alpine rm -rf /vol/downloads"
+            fi
+        fi
         ;;
 
     backup)
@@ -74,6 +97,10 @@ volume() {
 
         echo "📦 Volume:  $WORKDIR_VOLUME (${SIZE})"
         echo "💾 Archive: $ARCHIVE"
+        echo ""
+        echo "ℹ️  Scope: workdir/TMPDIR only. The sstate (${SSTATE_VOLUME})"
+        echo "   and downloads (${DL_VOLUME}) volumes are separate shared caches"
+        echo "   and are NOT included — both are rebuilt/re-fetched on demand."
         echo ""
         read -rp "Proceed with backup? [y/N] " confirm || { echo "Aborted."; _unload_default_exports; return 1; }
         [[ "$confirm" =~ ^[Yy]$ ]] || { echo "Aborted."; _unload_default_exports; return 0; }

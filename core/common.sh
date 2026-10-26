@@ -119,12 +119,22 @@ _load_default_exports() {
 }
 
 # Unload default exports function
+#
+# VOLUME_NAME is deliberately NOT unset here (unlike the other transient
+# exports below). _compute_volume_names() in config.sh honours a pre-set
+# VOLUME_NAME ("${VOLUME_NAME:-default}") so callers can pin a fixed workdir
+# volume name across an entire shell session. Unsetting it after every
+# single plugin invocation (poky, volume, cleanup, ...) defeated that: a
+# pinned name survived exactly one command, then silently reverted to the
+# hash-derived default on the next _load_default_exports call, splitting a
+# session's builds across two different volumes with no warning.
+# SSTATE_VOLUME_NAME/DL_VOLUME_NAME already aren't unset here, for the same
+# reason - this just makes VOLUME_NAME consistent with them.
 _unload_default_exports() {
     # Unexport environment variables for docker-compose
     unset POKY_IMAGE
     unset PROJECT_NAME
     unset WORKSPACE_PATH
     unset FILEBROWSER_PORT
-    unset VOLUME_NAME
     unset DOCKER_BUILDKIT
 }

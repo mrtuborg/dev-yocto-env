@@ -15,6 +15,7 @@
 # Output (KEY=VALUE, one per line, eval-able):
 #   VOLUME_NAME=<workdir volume name>
 #   SSTATE_VOLUME_NAME=<sstate volume name>
+#   DL_VOLUME_NAME=<downloads volume name>
 #
 # Example (bash):
 #   eval "$(DOCKER_REGISTRY=example.com/registry ./docker-yocto-env/print-volume-names.sh)"
@@ -33,3 +34,4 @@ source "${SCRIPT_DIR}/core/config.sh"
 
 echo "VOLUME_NAME=${VOLUME_NAME}"
 echo "SSTATE_VOLUME_NAME=${SSTATE_VOLUME_NAME}"
+echo "DL_VOLUME_NAME=${DL_VOLUME_NAME}"

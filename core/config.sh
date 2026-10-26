@@ -62,29 +62,35 @@ _hash_string() {
 
 # ── Volume naming ──────────────────────────────────────────────────────────
 #
-# Two identities are computed, because the workdir and sstate-cache volumes
-# have different sharing requirements:
+# Two identities are computed, because the workdir/TMPDIR and the shared
+# caches (sstate, downloads) have different sharing requirements:
 #
 #   PROJECT_PATH_KEY — unique per checkout LOCATION (basename + hash of the
-#   parent directory). Used for the `_workdir` volume (live BitBake TMPDIR +
-#   downloads), which must NEVER be shared between two concurrently-active,
+#   parent directory). Used for the `_workdir` volume (live BitBake TMPDIR
+#   only), which must NEVER be shared between two concurrently-active,
 #   unrelated builds — two different checkouts (e.g. two CI runner instances,
 #   or two directories that happen to share the same basename) must never
 #   collide here. It's fine — and expected — for this to differ across
 #   checkout locations of even the SAME repo; each location just gets its
-#   own independently-warmed workdir cache.
+#   own independently-warmed TMPDIR.
 #
 #   PROJECT_REPO_KEY — unique per REPOSITORY (basename + hash of the git
 #   remote URL), stable regardless of where or how many times it's checked
-#   out. Used for the sstate-cache volume, which IS safe (and beneficial) to
-#   share across many checkout locations, branches, and hardware targets of
-#   the same repo — BitBake's own task-signature hashing already keys sstate
-#   objects by everything that actually affects their output (including
-#   MACHINE), so sharing one cache across e.g. multiple self-hosted runners
-#   building the same repo is both safe and a real speedup. It is
-#   deliberately NOT branch-specific by default (sstate is designed to be
-#   reused across branches) but IS release-specific (see YOCTO_RELEASE
-#   above) since sstate objects from different Poky/OE releases are for all
+#   out. Used for the sstate-cache AND downloads volumes, which ARE safe
+#   (and beneficial) to share across many checkout locations, branches, and
+#   hardware targets of the same repo:
+#     - sstate: BitBake's own task-signature hashing already keys sstate
+#       objects by everything that actually affects their output (including
+#       MACHINE), so sharing one cache across e.g. multiple self-hosted
+#       runners building the same repo is both safe and a real speedup.
+#     - downloads (DL_DIR): BitBake's fetcher keys each download by its
+#       source URL (and verifies checksums when declared), so a download
+#       fetched once for any checkout/branch/runner is valid for all others.
+#       Unlike TMPDIR, concurrent access is safe — BitBake itself takes a
+#       lock file per download inside DL_DIR.
+#   Both are deliberately NOT branch-specific by default (designed to be
+#   reused across branches) but ARE release-specific (see YOCTO_RELEASE
+#   above) since objects from different Poky/OE releases are for all
 #   practical purposes never compatible and would just waste disk if mixed.
 #
 # Branch is folded into the workdir volume only, so switching branches in
@@ -157,11 +163,18 @@ _compute_volume_names() {
     SSTATE_VOLUME_NAME=${SSTATE_VOLUME_NAME:-${PROJECT_REPO_KEY}-${YOCTO_RELEASE}-${ENV_ARCH}_sstate}
     [[ -z "$SSTATE_VOLUME_NAME" ]] && SSTATE_VOLUME_NAME="${PROJECT_REPO_KEY}-${YOCTO_RELEASE}-${ENV_ARCH}_sstate"
 
+    # Downloads (DL_DIR): shared like sstate, keyed by repo+release, NOT by
+    # checkout location — see the "Volume naming" comment above for why this
+    # is safe (URL-addressed, checksum-verified, per-download locking).
+    DL_VOLUME_NAME=${DL_VOLUME_NAME:-${PROJECT_REPO_KEY}-${YOCTO_RELEASE}-${ENV_ARCH}_downloads}
+
     _validate_volume_name "$VOLUME_NAME" "VOLUME_NAME" || return 1
     _validate_volume_name "$SSTATE_VOLUME_NAME" "SSTATE_VOLUME_NAME" || return 1
+    _validate_volume_name "$DL_VOLUME_NAME" "DL_VOLUME_NAME" || return 1
 
     export VOLUME_NAME
     export SSTATE_VOLUME_NAME
+    export DL_VOLUME_NAME
     return 0
 }
 
@@ -244,6 +257,7 @@ export FILEBROWSER_PORT
 export ENV_ARCH
 export VOLUME_NAME
 export SSTATE_VOLUME_NAME
+export DL_VOLUME_NAME
 export TOASTER_WEBUI
 export DL_PORT
 export SSH_PATH
