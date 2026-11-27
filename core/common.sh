@@ -29,6 +29,7 @@ ensure_directory() {
 # Cache for expensive operations
 _COMPOSE_FILE_GENERATED=""
 _PROJECT_TOP_CACHED=""
+_CONTAINER_ROOTLESS=""
 
 # Load default exports function (moved from main env file)
 _load_default_exports() {
@@ -41,6 +42,16 @@ _load_default_exports() {
         echo "  Docker Desktop: https://www.docker.com/products/docker-desktop" >&2
         echo "  Colima: brew install colima docker && colima start" >&2
         return 1
+    fi
+
+    # Rootless Podman maps the host UID to container root, so '-u <host uid>'
+    # (and the root chowns of the volume init helpers) land on subuids that
+    # don't match the bind-mounted workspace. keep-id maps the host UID:GID to
+    # itself for every 'run'. Docker has no .Host field and ignores the var.
+    # Probed once per sourced env: 'podman info' alone takes ~2s.
+    : "${_CONTAINER_ROOTLESS:=$(${CONTAINER_CMD} info --format '{{.Host.Security.Rootless}}' 2>/dev/null || echo false)}"
+    if [[ "${_CONTAINER_ROOTLESS}" == "true" ]]; then
+        export PODMAN_USERNS=keep-id
     fi
     
     YOCTO_RELEASE=kirkstone
